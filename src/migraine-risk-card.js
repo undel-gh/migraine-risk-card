@@ -15,7 +15,7 @@
  * © 2026 — MIT Licence
  */
 
-const CARD_VERSION = '3.0.0';
+const CARD_VERSION = '3.0.1';
 
 console.info(
   `%c🧠 Migraine Risk Card %cv${CARD_VERSION}`,
@@ -767,7 +767,18 @@ class MigraineRiskCard extends HTMLElement {
     this._fc = {};
   }
 
-  static getConfigElement() {
+  static async getConfigElement() {
+    // ha-entity-picker is lazy-loaded by HA; force-load it so editor
+    // fields are functional immediately (standard custom-card workaround).
+    try {
+      const helpers = window.loadCardHelpers ? await window.loadCardHelpers() : null;
+      if (helpers) {
+        const ents = await helpers.createCardElement({ type: 'entities', entities: [] });
+        if (ents && ents.constructor && ents.constructor.getConfigElement) {
+          await ents.constructor.getConfigElement();
+        }
+      }
+    } catch (e) { /* pickers will upgrade lazily instead */ }
     return document.createElement('migraine-risk-card-editor');
   }
 
@@ -1440,6 +1451,25 @@ class MigraineRiskCardEditor extends HTMLElement {
         display: block;
         width: 100%;
       }
+      .native-select, .native-input {
+        display: block;
+        width: 100%;
+        box-sizing: border-box;
+        padding: 10px 12px;
+        font: inherit;
+        color: var(--primary-text-color);
+        background: var(--card-background-color, var(--ha-card-background, #fff));
+        border: 1px solid var(--divider-color, rgba(127,127,127,0.4));
+        border-radius: 8px;
+        outline: none;
+      }
+      .native-select:focus, .native-input:focus {
+        border-color: var(--primary-color, #03a9f4);
+      }
+      .native-select option {
+        color: var(--primary-text-color);
+        background: var(--card-background-color, #fff);
+      }
       .hint {
         font-size: 11px;
         color: var(--secondary-text-color);
@@ -1544,12 +1574,11 @@ class MigraineRiskCardEditor extends HTMLElement {
     msLbl.className = 'field-label';
     msLbl.textContent = this._t('editor.max_score');
     msField.appendChild(msLbl);
-    const msInput = document.createElement('ha-textfield');
+    const msInput = document.createElement('input');
+    msInput.className = 'native-input';
     msInput.setAttribute('type', 'number');
     msInput.setAttribute('min', '1');
-    msInput.type = 'number';
-    msInput.label = this._t('editor.max_score');
-    msInput.helper = this._t('editor.max_score_hint');
+    msInput.placeholder = this._t('editor.max_score_hint');
     msInput.value = this._config.max_score != null ? String(this._config.max_score) : '';
     msInput.addEventListener('change', (e) => {
       const n = parseInt(e.target?.value, 10);
@@ -1571,28 +1600,46 @@ class MigraineRiskCardEditor extends HTMLElement {
     lbl.textContent = label;
     field.appendChild(lbl);
 
-    const select = document.createElement('ha-select');
-    select.label = label;
+    // Native <select>: immune to HA's lazy component loading, always
+    // closes on click and fires a reliable change event.
+    const select = document.createElement('select');
+    select.className = 'native-select';
     for (const { value, text } of options) {
-      const item = document.createElement('mwc-list-item');
-      item.value = value;
-      item.textContent = text;
-      select.appendChild(item);
+      const opt = document.createElement('option');
+      opt.value = value;
+      opt.textContent = text;
+      if (value === current) opt.selected = true;
+      select.appendChild(opt);
     }
-    // Value must be assigned after the items exist, and again after the
-    // element upgrades/renders — otherwise the current choice is not shown.
-    select.value = current;
-    requestAnimationFrame(() => { select.value = current; });
-
-    select.addEventListener('selected', (e) => {
-      const val = e.target?.value;
-      if (!val || val === current) return; // ignore initial/no-op events
+    select.addEventListener('change', (e) => {
+      const val = e.target.value;
+      if (val === current) return;
       current = val;
       apply(val);
       this._fire();
     });
     field.appendChild(select);
     return field;
+  }
+
+  // Custom elements may be defined after we create them; properties set on
+  // a not-yet-upgraded element shadow the class accessors and are silently
+  // ignored. This assigns now AND re-assigns correctly after upgrade.
+  _assignProps(el, props) {
+    const assign = () => {
+      for (const [k, v] of Object.entries(props)) {
+        if (v !== undefined) el[k] = v;
+      }
+    };
+    if (!customElements.get(el.localName)) {
+      customElements.whenDefined(el.localName).then(() => {
+        for (const k of Object.keys(props)) {
+          if (Object.prototype.hasOwnProperty.call(el, k)) delete el[k];
+        }
+        assign();
+      });
+    }
+    assign();
   }
 
   _section(icon, title, hint, fields) {
@@ -1622,10 +1669,13 @@ class MigraineRiskCardEditor extends HTMLElement {
       field.appendChild(lbl);
 
       const picker = document.createElement('ha-entity-picker');
-      picker.allowCustomEntity = true;
-      if (domains) picker.includeDomains = domains;
-      picker.value = this._config[key] || '';
-      picker.label = label;
+      this._assignProps(picker, {
+        hass: this._hass,
+        allowCustomEntity: true,
+        includeDomains: domains,
+        value: this._config[key] || '',
+        label,
+      });
       picker.addEventListener('value-changed', (e) => {
         const val = e.detail?.value || '';
         if (val) {
