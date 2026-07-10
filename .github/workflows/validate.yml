@@ -1,0 +1,38 @@
+name: Validate
+
+on:
+  push:
+  pull_request:
+  schedule:
+    - cron: "0 4 * * 1"
+  workflow_dispatch:
+
+jobs:
+  hacs:
+    name: HACS validation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: HACS validation
+        uses: hacs/action@main
+        with:
+          category: plugin
+
+  dist-sync:
+    name: dist matches src
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check dist/ is in sync with src/
+        run: |
+          if ! diff -q src/migraine-risk-card.js dist/migraine-risk-card.js; then
+            echo "::error::dist/migraine-risk-card.js is out of sync with src/. Run: cp src/migraine-risk-card.js dist/"
+            exit 1
+          fi
+
+      - name: Syntax check
+        run: node --check dist/migraine-risk-card.js
