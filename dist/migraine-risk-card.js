@@ -1,5 +1,5 @@
 /**
- * Migraine Risk Card v2.2.0
+ * Migraine Risk Card v2.1.0
  * Home Assistant Custom Lovelace Card
  *
  * Works two ways:
@@ -940,7 +940,10 @@ class MigraineRiskCard extends HTMLElement {
       const conv = convertToImperial(key, ex.score); // score is metric-normalised
       if (conv) return fmtNum(conv.value) + conv.unit;
     }
-    return fmtNum(ex.display ?? ex.score) + (ex.unit || '');
+    let unit = ex.unit || '';
+    // "0AQI" → "0 AQI": letter-starting units get a separating space
+    if (unit && !unit.startsWith(' ') && /^[a-zа-яё]/i.test(unit)) unit = ' ' + unit;
+    return fmtNum(ex.display ?? ex.score) + unit;
   }
 
   _refreshForecast(card) {
@@ -998,8 +1001,13 @@ class MigraineRiskCard extends HTMLElement {
     const fLevelText = tr(this._lang, 'level.' + fLevel, fLevel);
     bar.querySelector('.forecast-risk').textContent =
       `${fLevelText} (${Math.round(fScore)} ${tr(this._lang, 'pts')})`;
+    const metaVal = (v) => {
+      if (v == null) return '—';
+      const s = String(v).trim();
+      return (s === '' || s === 'N/A' || s === 'unknown' || s === 'unavailable' || s === 'None') ? '—' : s;
+    };
     bar.querySelector('.forecast-meta').textContent =
-      `${attrs.temp_min || '—'}–${attrs.temp_max || '—'} · UV ${attrs.uv_index ?? '—'} · ${tr(this._lang, 'rain')} ${attrs.rain_chance || '—'}`;
+      `${metaVal(attrs.temp_min)}–${metaVal(attrs.temp_max)} · UV ${metaVal(attrs.uv_index)} · ${tr(this._lang, 'rain')} ${metaVal(attrs.rain_chance)}`;
     bar.querySelector('.forecast-badge').textContent = Math.round(fScore);
   }
 }
