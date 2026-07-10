@@ -15,7 +15,7 @@
  * © 2026 — MIT Licence
  */
 
-const CARD_VERSION = '2.1.0';
+const CARD_VERSION = '2.2.0';
 
 console.info(
   `%c🧠 Migraine Risk Card %cv${CARD_VERSION}`,
@@ -112,6 +112,183 @@ const FACTORS = {
 const FACTOR_KEYS = Object.keys(FACTORS);
 
 const STORM_DISPLAY = { '0': 'Clear', '1': 'Risk', '2': 'Storm' };
+
+/* ─── Translations ───────────────────────────────────────────────── */
+
+const I18N = {
+  en: {
+    factors_header: 'Contributing Factors',
+    empty: 'Configure entity sensors in the card editor to get started.',
+    no_data: 'NO DATA',
+    forecast_title: "Tomorrow's Forecast",
+    pts: 'pts',
+    rain: 'Rain',
+    level: { 'Low': 'Low', 'Moderate': 'Moderate', 'High': 'High', 'Very High': 'Very High' },
+    storm: { '0': 'Clear', '1': 'Risk', '2': 'Storm' },
+    factor: {
+      pressure_6h:        { name: 'Pressure 6h',  label: 'Pressure Change (6h)' },
+      pressure_24h:       { name: 'Pressure 24h', label: 'Pressure Change (24h)' },
+      humidity:           { name: 'Humidity',     label: 'Humidity' },
+      temperature:        { name: 'Temperature',  label: 'Current Temperature' },
+      temperature_change: { name: 'Temp Change',  label: 'Temperature Change (6h)' },
+      wind:               { name: 'Wind',         label: 'Wind Speed' },
+      uv:                 { name: 'UV',           label: 'UV Index' },
+      thunderstorm:       { name: 'Storm',        label: 'Storm / Lightning' },
+      air_quality:        { name: 'AQI',          label: 'Air Quality (AQI)' },
+    },
+    editor: {
+      integration: 'Integration (Optional)',
+      integration_hint: 'If you have the Migraine Risk integration, these provide pre-computed scores.',
+      risk_score: 'Risk Score Entity',
+      risk_level: 'Risk Level Entity',
+      forecast: 'Forecast Entity',
+      weather: 'Weather Sensors',
+      weather_hint: 'Select sensors or a weather entity. For weather entities the card reads values from attributes (temperature, wind, storm). Only configured sensors will appear on the card.',
+      display: 'Display',
+      display_hint: 'Internal scoring is always metric; only what you see on the card changes.',
+      units: 'Display Units',
+      metric: 'Metric (°C, km/h, hPa)',
+      imperial: 'Imperial (°F, mph, inHg)',
+      language: 'Language',
+      lang_auto: 'Auto (Home Assistant)',
+    },
+  },
+  ru: {
+    factors_header: 'Факторы риска',
+    empty: 'Выберите сенсоры в редакторе карточки, чтобы начать.',
+    no_data: 'НЕТ ДАННЫХ',
+    forecast_title: 'Прогноз на завтра',
+    pts: 'балл.',
+    rain: 'Дождь',
+    level: { 'Low': 'Низкий', 'Moderate': 'Умеренный', 'High': 'Высокий', 'Very High': 'Очень высокий' },
+    storm: { '0': 'Ясно', '1': 'Возможна', '2': 'Гроза' },
+    factor: {
+      pressure_6h:        { name: 'Давление 6ч',  label: 'Изменение давления (6ч)' },
+      pressure_24h:       { name: 'Давление 24ч', label: 'Изменение давления (24ч)' },
+      humidity:           { name: 'Влажность',    label: 'Влажность' },
+      temperature:        { name: 'Температура',  label: 'Текущая температура' },
+      temperature_change: { name: 'Изм. темп.',   label: 'Изменение температуры (6ч)' },
+      wind:               { name: 'Ветер',        label: 'Скорость ветра' },
+      uv:                 { name: 'УФ',           label: 'УФ-индекс' },
+      thunderstorm:       { name: 'Гроза',        label: 'Гроза / молнии' },
+      air_quality:        { name: 'AQI',          label: 'Качество воздуха (AQI)' },
+    },
+    editor: {
+      integration: 'Интеграция (необязательно)',
+      integration_hint: 'Если установлена интеграция Migraine Risk, эти сущности дают готовые баллы.',
+      risk_score: 'Сущность балла риска',
+      risk_level: 'Сущность уровня риска',
+      forecast: 'Сущность прогноза',
+      weather: 'Погодные сенсоры',
+      weather_hint: 'Выберите сенсоры или weather-сущность. Из weather-сущности карточка читает атрибуты (температура, ветер, гроза). На карточке отображаются только настроенные сенсоры.',
+      display: 'Отображение',
+      display_hint: 'Внутренний расчёт всегда в метрической системе; меняется только отображение.',
+      units: 'Единицы отображения',
+      metric: 'Метрические (°C, км/ч, гПа)',
+      imperial: 'Имперские (°F, mph, inHg)',
+      language: 'Язык',
+      lang_auto: 'Авто (из Home Assistant)',
+    },
+  },
+};
+
+function resolveLang(hass, config) {
+  const forced = config?.language;
+  if (forced && I18N[forced]) return forced;
+  const haLang = (hass?.locale?.language || hass?.language || 'en').split('-')[0];
+  return I18N[haLang] ? haLang : 'en';
+}
+
+function tr(lang, path, fallback) {
+  const walk = (dict) => path.split('.').reduce((cur, p) => (cur == null ? cur : cur[p]), dict);
+  let v = walk(I18N[lang]);
+  if (v == null && lang !== 'en') v = walk(I18N.en);
+  return v != null ? v : (fallback != null ? fallback : path);
+}
+
+/* ─── Weather-entity support ─────────────────────────────────────── */
+
+// Which weather-entity attribute feeds which factor.
+// Pressure-change factors have no source attribute: a weather entity only
+// exposes the instantaneous pressure, not its change over time.
+const WEATHER_ATTR = {
+  temperature: 'temperature',
+  humidity: 'humidity',
+  wind: 'wind_speed',
+  uv: 'uv_index',
+};
+
+function windToKmh(v, unit) {
+  if (v == null) return null;
+  switch (String(unit || '').toLowerCase()) {
+    case 'm/s': case 'm/с': case 'м/с': return v * 3.6;
+    case 'mph': return v * 1.60934;
+    case 'kn': case 'knots': return v * 1.852;
+    default: return v; // km/h
+  }
+}
+
+function tempToC(v, unit) {
+  if (v == null) return null;
+  return (unit === '°F' || unit === 'F') ? (v - 32) * 5 / 9 : v;
+}
+
+function pressureToHpa(v, unit) {
+  if (v == null) return null;
+  switch (String(unit || '').toLowerCase().replace(/\s/g, '')) {
+    case 'mmhg': case 'ммрт.ст.': case 'ммртст': return v * 1.33322;
+    case 'inhg': return v * 33.8639;
+    case 'kpa': case 'кпа': return v * 10;
+    case 'psi': return v * 68.9476;
+    default: return v; // hPa / mbar
+  }
+}
+
+/**
+ * Extract a factor value from either a numeric sensor or a weather.* entity.
+ * Returns { score, display, unit }:
+ *   score   — metric-normalised number used by the scoring engine (or null)
+ *   display — raw value in the source's own units (or null)
+ *   unit    — unit string for display
+ */
+function extractFactorValue(entity, key, def) {
+  if (!entity) return { score: null, display: null, unit: def?.unit || '' };
+  const a = entity.attributes || {};
+
+  if (!entity.entity_id.startsWith('weather.')) {
+    const n = parseNum(entity.state);
+    let score = n;
+    if (key === 'wind' && n != null) score = windToKmh(n, a.unit_of_measurement);
+    if (key === 'temperature' && n != null) score = tempToC(n, a.unit_of_measurement);
+    if ((key === 'pressure_6h' || key === 'pressure_24h') && n != null) {
+      score = pressureToHpa(n, a.unit_of_measurement);
+    }
+    return { score, display: n, unit: a.unit_of_measurement || def?.unit || '' };
+  }
+
+  // weather.* entity: read from attributes
+  if (key === 'thunderstorm') {
+    const cond = String(entity.state || '');
+    const v = cond.startsWith('lightning') ? 2 : 0;
+    return { score: v, display: v, unit: '' };
+  }
+
+  const attr = WEATHER_ATTR[key];
+  if (!attr) return { score: null, display: null, unit: '' };
+  const raw = parseNum(a[attr]);
+  if (raw == null) return { score: null, display: null, unit: '' };
+
+  switch (key) {
+    case 'temperature':
+      return { score: tempToC(raw, a.temperature_unit), display: raw, unit: a.temperature_unit || '°C' };
+    case 'wind':
+      return { score: windToKmh(raw, a.wind_speed_unit), display: raw, unit: a.wind_speed_unit ? ' ' + a.wind_speed_unit : ' km/h' };
+    case 'humidity':
+      return { score: raw, display: raw, unit: '%' };
+    default:
+      return { score: raw, display: raw, unit: def?.unit || '' };
+  }
+}
 
 const RISK_COLOURS = {
   'Low':       '#4ade80',
@@ -489,10 +666,18 @@ class MigraineRiskCard extends HTMLElement {
   setConfig(config) {
     // No required entities — card shows what's configured
     this._config = { ...config };
+    if (this._hass) {
+      this._lang = resolveLang(this._hass, this._config);
+      this._prevHash = '';
+      this._built = false;
+      this._update();
+    }
   }
 
   set hass(hass) {
     this._hass = hass;
+    if (!this._config) return;
+    this._lang = resolveLang(hass, this._config);
     const hash = this._stateHash();
     if (hash !== this._prevHash) {
       this._prevHash = hash;
@@ -515,15 +700,34 @@ class MigraineRiskCard extends HTMLElement {
 
   _stateHash() {
     const h = this._hass;
-    if (!h) return '';
+    if (!h || !this._config) return '';
     const c = this._config;
     let s = '';
-    if (c.entity_risk_score) s += (h.states[c.entity_risk_score]?.state || '') + '|';
+    if (c.entity_risk_score) {
+      const e = h.states[c.entity_risk_score];
+      s += (e?.state || '') + '|';
+      // Integration attributes carry per-factor points
+      if (e?.attributes) for (const k of FACTOR_KEYS) s += (e.attributes[k + '_points'] ?? '') + ',';
+      s += '|';
+    }
     if (c.entity_risk_level) s += (h.states[c.entity_risk_level]?.state || '') + '|';
-    if (c.entity_forecast) s += (h.states[c.entity_forecast]?.state || '') + '|';
+    if (c.entity_forecast) {
+      const e = h.states[c.entity_forecast];
+      const a = e?.attributes || {};
+      s += (e?.state || '') + ';' + (a.risk_level || '') + ';' + (a.temp_min ?? '') + ';' + (a.temp_max ?? '') + ';' + (a.uv_index ?? '') + ';' + (a.rain_chance ?? '') + '|';
+    }
     for (const k of FACTOR_KEYS) {
       const eid = c[FACTORS[k].configKey];
-      if (eid) s += (h.states[eid]?.state || '') + '|';
+      if (!eid) continue;
+      const e = h.states[eid];
+      s += (e?.state || '');
+      // weather.* entities: the interesting data lives in attributes and the
+      // state ("cloudy") often does not change when they do
+      if (eid.startsWith('weather.') && e?.attributes) {
+        const a = e.attributes;
+        s += ';' + (a.temperature ?? '') + ';' + (a.humidity ?? '') + ';' + (a.wind_speed ?? '') + ';' + (a.uv_index ?? '');
+      }
+      s += '|';
     }
     return s;
   }
@@ -564,7 +768,7 @@ class MigraineRiskCard extends HTMLElement {
         </svg>
         <div class="risk-label"></div>
       </div>
-      <div class="factors-header">Contributing Factors</div>
+      <div class="factors-header"></div>
       <div class="factors-grid"></div>
     `;
     sr.appendChild(card);
@@ -587,18 +791,26 @@ class MigraineRiskCard extends HTMLElement {
     const el = this._els;
     const active = this._activeFactors();
 
+    const lang = this._lang || resolveLang(h, c);
+    this._lang = lang;
+
     // Nothing configured at all
     if (active.length === 0 && !c.entity_risk_score) {
       el.factorsHdr.style.display = 'none';
-      el.factorGrid.innerHTML = '<div class="empty-msg">Configure entity sensors in the card editor to get started.</div>';
+      el.factorGrid.innerHTML = '';
+      const msg = document.createElement('div');
+      msg.className = 'empty-msg';
+      msg.textContent = tr(lang, 'empty');
+      el.factorGrid.appendChild(msg);
       el.gaugeScore.textContent = '—';
       el.gaugeMax.textContent = '';
-      el.riskLabel.textContent = 'NO DATA';
+      el.riskLabel.textContent = tr(lang, 'no_data');
       el.card.style.setProperty('--risk-color', '#555');
       el.gaugeFill.setAttribute('stroke-dashoffset', '251.33');
       return;
     }
     el.factorsHdr.style.display = '';
+    el.factorsHdr.textContent = tr(lang, 'factors_header');
 
     // Compute per-factor points and total score
     let totalScore = 0;
@@ -612,20 +824,20 @@ class MigraineRiskCard extends HTMLElement {
       const def = FACTORS[key];
       const eid = c[def.configKey];
       const entity = h.states[eid];
-      const rawVal = parseNum(entity?.state);
+      const extracted = extractFactorValue(entity, key, def);
 
       let pts;
       if (useIntegration && riskScoreState) {
         // Integration mode: read points from risk_score attributes
-        pts = riskScoreState.attributes?.[key + '_points'] ?? computeFactorPoints(key, rawVal);
+        pts = riskScoreState.attributes?.[key + '_points'] ?? computeFactorPoints(key, extracted.score);
       } else {
-        // Standalone mode: compute from raw value
-        pts = computeFactorPoints(key, rawVal);
+        // Standalone mode: compute from metric-normalised value
+        pts = computeFactorPoints(key, extracted.score);
       }
 
       totalScore += pts;
       maxScore += def.maxPts;
-      factorData.push({ key, pts, entity, def });
+      factorData.push({ key, pts, entity, def, extracted });
     }
 
     // If integration provides a pre-computed score, use that instead
@@ -657,7 +869,7 @@ class MigraineRiskCard extends HTMLElement {
     el.gaugeFill.setAttribute('stroke-dashoffset', 251.33 * (1 - pct));
     el.gaugeScore.textContent = Math.round(totalScore);
     el.gaugeMax.textContent = '/' + maxScore;
-    el.riskLabel.textContent = level.toUpperCase();
+    el.riskLabel.textContent = String(tr(lang, 'level.' + level, level)).toUpperCase();
 
     // Factor grid
     this._refreshFactors(factorData);
@@ -701,25 +913,34 @@ class MigraineRiskCard extends HTMLElement {
         iconEl.querySelector('ha-icon').setAttribute('icon', def.icon);
       }
 
-      tile.querySelector('.factor-name').textContent = def.name;
-      tile.querySelector('.factor-value').textContent = this._fmtFactor(entity, key, def);
+      tile.querySelector('.factor-name').textContent = tr(this._lang, 'factor.' + key + '.name', def.name);
+      tile.querySelector('.factor-value').textContent = this._fmtFactor(entity, key, def, factorData[i].extracted);
     });
   }
 
-  _fmtFactor(entity, key, def) {
+  _fmtFactor(entity, key, def, extracted) {
     if (!entity) return '?';
     const st = entity.state;
     if (st === 'unavailable' || st === 'unknown') return '—';
-    if (key === 'thunderstorm') return STORM_DISPLAY[st] || st;
-    const n = parseNum(st);
-    if (n == null) return st;
+
+    const ex = extracted || extractFactorValue(entity, key, def);
+
+    if (key === 'thunderstorm') {
+      const code = String(ex.score ?? st);
+      return tr(this._lang, 'storm.' + code, STORM_DISPLAY[code] || code);
+    }
+
+    if (ex.score == null && ex.display == null) {
+      // Non-numeric sensor state (or weather entity lacking the attribute)
+      return entity.entity_id.startsWith('weather.') ? '—' : st;
+    }
+
     const imperial = this._config.displayUnits === 'imperial';
-    if (imperial) {
-      const conv = convertToImperial(key, n);
+    if (imperial && ex.score != null) {
+      const conv = convertToImperial(key, ex.score); // score is metric-normalised
       if (conv) return fmtNum(conv.value) + conv.unit;
     }
-    const unit = entity.attributes?.unit_of_measurement || def.unit || '';
-    return fmtNum(n) + unit;
+    return fmtNum(ex.display ?? ex.score) + (ex.unit || '');
   }
 
   _refreshForecast(card) {
@@ -739,13 +960,14 @@ class MigraineRiskCard extends HTMLElement {
       bar.innerHTML = `
         <div class="forecast-icon"></div>
         <div class="forecast-details">
-          <div class="forecast-title">Tomorrow's Forecast</div>
+          <div class="forecast-title"></div>
           <div class="forecast-risk"></div>
           <div class="forecast-meta"></div>
         </div>
         <div class="forecast-badge"></div>`;
       card.appendChild(bar);
     }
+    bar.querySelector('.forecast-title').textContent = tr(this._lang, 'forecast_title');
 
     const attrs = entity.attributes || {};
     const fScore = parseNum(entity.state) ?? 0;
@@ -773,9 +995,11 @@ class MigraineRiskCard extends HTMLElement {
       fIconEl.querySelector('ha-icon').setAttribute('icon', fIconName);
     }
 
-    bar.querySelector('.forecast-risk').textContent = `${fLevel} (${Math.round(fScore)} pts)`;
+    const fLevelText = tr(this._lang, 'level.' + fLevel, fLevel);
+    bar.querySelector('.forecast-risk').textContent =
+      `${fLevelText} (${Math.round(fScore)} ${tr(this._lang, 'pts')})`;
     bar.querySelector('.forecast-meta').textContent =
-      `${attrs.temp_min || '—'}–${attrs.temp_max || '—'} · UV ${attrs.uv_index ?? '—'} · Rain ${attrs.rain_chance || '—'}`;
+      `${attrs.temp_min || '—'}–${attrs.temp_max || '—'} · UV ${attrs.uv_index ?? '—'} · ${tr(this._lang, 'rain')} ${attrs.rain_chance || '—'}`;
     bar.querySelector('.forecast-badge').textContent = Math.round(fScore);
   }
 }
@@ -794,18 +1018,27 @@ class MigraineRiskCardEditor extends HTMLElement {
   }
 
   set hass(hass) {
+    const firstHass = !this._hass;
     this._hass = hass;
-    // Update pickers with hass reference
     if (this._rendered) {
-      this.shadowRoot.querySelectorAll('ha-entity-picker').forEach(p => {
-        p.hass = hass;
-      });
+      if (firstHass) {
+        // Language comes from hass — re-render once it is known
+        this._render();
+      } else {
+        this.shadowRoot.querySelectorAll('ha-entity-picker').forEach(p => {
+          p.hass = hass;
+        });
+      }
     }
   }
 
   setConfig(config) {
     this._config = { ...config };
     this._render();
+  }
+
+  _t(path, fallback) {
+    return tr(resolveLang(this._hass, this._config), path, fallback);
   }
 
   _render() {
@@ -863,23 +1096,23 @@ class MigraineRiskCardEditor extends HTMLElement {
 
     // ── Section: Integration (optional) ──
     container.appendChild(this._section(
-      'mdi:connection', 'Integration (Optional)',
-      'If you have the Migraine Risk integration, these provide pre-computed scores.',
+      'mdi:connection', this._t('editor.integration'),
+      this._t('editor.integration_hint'),
       [
-        { key: 'entity_risk_score', label: 'Risk Score Entity' },
-        { key: 'entity_risk_level', label: 'Risk Level Entity' },
-        { key: 'entity_forecast',   label: 'Forecast Entity' },
+        { key: 'entity_risk_score', label: this._t('editor.risk_score') },
+        { key: 'entity_risk_level', label: this._t('editor.risk_level') },
+        { key: 'entity_forecast',   label: this._t('editor.forecast') },
       ]
     ));
 
     // ── Section: Weather Sensors ──
     const weatherFields = FACTOR_KEYS.map(k => ({
       key: FACTORS[k].configKey,
-      label: FACTORS[k].label,
+      label: this._t('factor.' + k + '.label', FACTORS[k].label),
     }));
     container.appendChild(this._section(
-      'mdi:weather-partly-cloudy', 'Weather Sensors',
-      'Select any weather entities you have. Only configured sensors will appear on the card.',
+      'mdi:weather-partly-cloudy', this._t('editor.weather'),
+      this._t('editor.weather_hint'),
       weatherFields
     ));
 
@@ -903,44 +1136,80 @@ class MigraineRiskCardEditor extends HTMLElement {
 
     const titleEl = document.createElement('div');
     titleEl.className = 'section-title';
-    titleEl.innerHTML = '<ha-icon icon="mdi:tune"></ha-icon> Display';
+    const icon = document.createElement('ha-icon');
+    icon.setAttribute('icon', 'mdi:tune');
+    titleEl.appendChild(icon);
+    titleEl.appendChild(document.createTextNode(' ' + this._t('editor.display')));
     section.appendChild(titleEl);
 
     const hintEl = document.createElement('div');
     hintEl.className = 'hint';
-    hintEl.textContent = 'Internal scoring is always metric; only what you see on the card changes.';
+    hintEl.textContent = this._t('editor.display_hint');
     hintEl.style.marginBottom = '12px';
     section.appendChild(hintEl);
 
+    // Units select
+    section.appendChild(this._selectField(
+      this._t('editor.units'),
+      [
+        { value: 'metric',   text: this._t('editor.metric') },
+        { value: 'imperial', text: this._t('editor.imperial') },
+      ],
+      this._config.displayUnits || 'metric',
+      (val) => {
+        if (val === 'metric') delete this._config.displayUnits;
+        else this._config.displayUnits = val;
+      }
+    ));
+
+    // Language select
+    const langOptions = [{ value: 'auto', text: this._t('editor.lang_auto') }]
+      .concat(Object.keys(I18N).map(code => ({ value: code, text: code.toUpperCase() })));
+    section.appendChild(this._selectField(
+      this._t('editor.language'),
+      langOptions,
+      this._config.language || 'auto',
+      (val) => {
+        if (val === 'auto') delete this._config.language;
+        else this._config.language = val;
+        // Editor labels change with language too
+        this._render();
+      }
+    ));
+
+    return section;
+  }
+
+  _selectField(label, options, current, apply) {
     const field = document.createElement('div');
     field.className = 'field';
     const lbl = document.createElement('div');
     lbl.className = 'field-label';
-    lbl.textContent = 'Display Units';
+    lbl.textContent = label;
     field.appendChild(lbl);
 
     const select = document.createElement('ha-select');
-    select.value = this._config.displayUnits || 'metric';
-    select.label = 'Display Units';
-    ['metric', 'imperial'].forEach(v => {
+    select.label = label;
+    for (const { value, text } of options) {
       const item = document.createElement('mwc-list-item');
-      item.value = v;
-      item.textContent = v === 'metric' ? 'Metric (°C, km/h, hPa)' : 'Imperial (°F, mph, inHg)';
+      item.value = value;
+      item.textContent = text;
       select.appendChild(item);
-    });
+    }
+    // Value must be assigned after the items exist, and again after the
+    // element upgrades/renders — otherwise the current choice is not shown.
+    select.value = current;
+    requestAnimationFrame(() => { select.value = current; });
+
     select.addEventListener('selected', (e) => {
-      const val = e.target?.value || 'metric';
-      if (val === 'metric') {
-        delete this._config.displayUnits;
-      } else {
-        this._config.displayUnits = val;
-      }
+      const val = e.target?.value;
+      if (!val || val === current) return; // ignore initial/no-op events
+      current = val;
+      apply(val);
       this._fire();
     });
     field.appendChild(select);
-
-    section.appendChild(field);
-    return section;
+    return field;
   }
 
   _section(icon, title, hint, fields) {
