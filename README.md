@@ -2,7 +2,7 @@
 
 A science-backed environmental migraine risk monitoring card for Home Assistant. Tracks 9 weather and air quality factors known to trigger migraines and displays a composite risk score with a visual gauge.
 
-![Migraine Risk Card](https://raw.githubusercontent.com/GreenNovaEmma/migraine-risk-card/main/docs/card-preview.png)
+![Migraine Risk Card](https://raw.githubusercontent.com/undel-gh/migraine-risk-card/main/docs/card-preview.png)
 
 ## Why I Built This
 
@@ -31,7 +31,7 @@ I hope it helps you as much as it's helped me.
 
 1. Open HACS in your Home Assistant sidebar
 2. Click the three-dot menu → **Custom repositories**
-3. Paste: `https://github.com/GreenNovaEmma/migraine-risk-card`
+3. Paste: `https://github.com/undel-gh/migraine-risk-card`
 4. Set category to **Dashboard**
 5. Click **Add**, then find "Migraine Risk Card" in the Frontend list and install it
 6. Add the resource in **Settings → Dashboards → Resources**:
@@ -50,8 +50,8 @@ The sensor package creates the derived sensors (pressure drops, temperature chan
      packages: !include_dir_named packages
    ```
 2. Download the **latest** sensor package and save it to your `/config/packages/` directory:
-   - **Direct link to latest:** [migraine_sensors.yaml on main branch](https://raw.githubusercontent.com/GreenNovaEmma/migraine-risk-card/main/sensor-package/migraine_sensors.yaml) (right-click → Save As)
-   - Or grab it from the most recent release: [releases page](https://github.com/GreenNovaEmma/migraine-risk-card/releases/latest) → Assets → `migraine_sensors.yaml`
+   - **Direct link to latest:** [migraine_sensors.yaml on main branch](https://raw.githubusercontent.com/undel-gh/migraine-risk-card/main/sensor-package/migraine_sensors.yaml) (right-click → Save As)
+   - Or grab it from the most recent release: [releases page](https://github.com/undel-gh/migraine-risk-card/releases/latest) → Assets → `migraine_sensors.yaml`
 
    > **⚠️ Don't reuse an older local copy.** If you previously installed the sensor package and have an old version sitting on your machine, please re-download the latest one — earlier versions had a bug that breaks the risk score on new installs (see [Upgrading from a pre-v2.0.3 install](#upgrading-from-a-pre-v203-install)).
 3. Restart Home Assistant
