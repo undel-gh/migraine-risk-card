@@ -151,6 +151,8 @@ const I18N = {
       imperial: 'Imperial (°F, mph, inHg)',
       language: 'Language',
       lang_auto: 'Auto (Home Assistant)',
+      max_score: 'Gauge maximum (integration mode)',
+      max_score_hint: 'Leave empty for automatic.',
     },
   },
   ru: {
@@ -188,6 +190,8 @@ const I18N = {
       imperial: 'Имперские (°F, mph, inHg)',
       language: 'Язык',
       lang_auto: 'Авто (из Home Assistant)',
+      max_score: 'Максимум шкалы (режим интеграции)',
+      max_score_hint: 'Оставьте пустым для автоматического расчёта.',
     },
   },
 };
@@ -1453,16 +1457,18 @@ class MigraineRiskCardEditor extends HTMLElement {
       'mdi:connection', this._t('editor.integration'),
       this._t('editor.integration_hint'),
       [
-        { key: 'entity_risk_score', label: this._t('editor.risk_score') },
-        { key: 'entity_risk_level', label: this._t('editor.risk_level') },
-        { key: 'entity_forecast',   label: this._t('editor.forecast') },
+        { key: 'entity_risk_score', label: this._t('editor.risk_score'), domains: ['sensor'] },
+        { key: 'entity_risk_level', label: this._t('editor.risk_level'), domains: ['sensor'] },
+        { key: 'entity_forecast',   label: this._t('editor.forecast'), domains: ['sensor', 'weather'] },
       ]
     ));
 
     // ── Section: Weather Sensors ──
+    const factorDomains = ['sensor', 'weather', 'number', 'input_number'];
     const weatherFields = FACTOR_KEYS.map(k => ({
       key: FACTORS[k].configKey,
       label: this._t('factor.' + k + '.label', FACTORS[k].label),
+      domains: factorDomains,
     }));
     container.appendChild(this._section(
       'mdi:weather-partly-cloudy', this._t('editor.weather'),
@@ -1531,6 +1537,29 @@ class MigraineRiskCardEditor extends HTMLElement {
       }
     ));
 
+    // Max score override (integration mode)
+    const msField = document.createElement('div');
+    msField.className = 'field';
+    const msLbl = document.createElement('div');
+    msLbl.className = 'field-label';
+    msLbl.textContent = this._t('editor.max_score');
+    msField.appendChild(msLbl);
+    const msInput = document.createElement('ha-textfield');
+    msInput.setAttribute('type', 'number');
+    msInput.setAttribute('min', '1');
+    msInput.type = 'number';
+    msInput.label = this._t('editor.max_score');
+    msInput.helper = this._t('editor.max_score_hint');
+    msInput.value = this._config.max_score != null ? String(this._config.max_score) : '';
+    msInput.addEventListener('change', (e) => {
+      const n = parseInt(e.target?.value, 10);
+      if (!isNaN(n) && n > 0) this._config.max_score = n;
+      else delete this._config.max_score;
+      this._fire();
+    });
+    msField.appendChild(msInput);
+    section.appendChild(msField);
+
     return section;
   }
 
@@ -1583,7 +1612,7 @@ class MigraineRiskCardEditor extends HTMLElement {
       section.appendChild(hintEl);
     }
 
-    for (const { key, label } of fields) {
+    for (const { key, label, domains } of fields) {
       const field = document.createElement('div');
       field.className = 'field';
 
@@ -1594,6 +1623,7 @@ class MigraineRiskCardEditor extends HTMLElement {
 
       const picker = document.createElement('ha-entity-picker');
       picker.allowCustomEntity = true;
+      if (domains) picker.includeDomains = domains;
       picker.value = this._config[key] || '';
       picker.label = label;
       picker.addEventListener('value-changed', (e) => {
