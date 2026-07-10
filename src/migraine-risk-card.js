@@ -1,5 +1,5 @@
 /**
- * Migraine Risk Card v2.2.0
+ * Migraine Risk Card v2.1.0
  * Home Assistant Custom Lovelace Card
  *
  * Works two ways:
@@ -15,7 +15,7 @@
  * © 2026 — MIT Licence
  */
 
-const CARD_VERSION = '2.2.0';
+const CARD_VERSION = '3.0.0';
 
 console.info(
   `%c🧠 Migraine Risk Card %cv${CARD_VERSION}`,
@@ -138,12 +138,12 @@ const I18N = {
     },
     editor: {
       integration: 'Integration (Optional)',
-      integration_hint: 'If you have the Migraine Risk integration, these provide pre-computed scores.',
+      integration_hint: 'Optional: pre-computed scores from the sensor package. Forecast Entity may also be a weather entity — the card will compute tomorrow itself.',
       risk_score: 'Risk Score Entity',
       risk_level: 'Risk Level Entity',
       forecast: 'Forecast Entity',
       weather: 'Weather Sensors',
-      weather_hint: 'Select sensors or a weather entity. For weather entities the card reads values from attributes (temperature, wind, storm). Only configured sensors will appear on the card.',
+      weather_hint: 'Sensors or a weather entity both work. From a weather entity the card reads attributes directly and computes pressure/temperature changes from history and storms from the forecast — no sensor package needed.',
       display: 'Display',
       display_hint: 'Internal scoring is always metric; only what you see on the card changes.',
       units: 'Display Units',
@@ -175,12 +175,12 @@ const I18N = {
     },
     editor: {
       integration: 'Интеграция (необязательно)',
-      integration_hint: 'Если установлена интеграция Migraine Risk, эти сущности дают готовые баллы.',
+      integration_hint: 'Необязательно: готовые баллы из пакета сенсоров. В «Сущность прогноза» можно указать и weather-сущность — карточка сама рассчитает завтра.',
       risk_score: 'Сущность балла риска',
       risk_level: 'Сущность уровня риска',
       forecast: 'Сущность прогноза',
       weather: 'Погодные сенсоры',
-      weather_hint: 'Выберите сенсоры или weather-сущность. Из weather-сущности карточка читает атрибуты (температура, ветер, гроза). На карточке отображаются только настроенные сенсоры.',
+      weather_hint: 'Подходят и сенсоры, и weather-сущность. Из weather-сущности карточка читает атрибуты, сама считает изменения давления/температуры по истории и грозу по прогнозу — пакет сенсоров не требуется.',
       display: 'Отображение',
       display_hint: 'Внутренний расчёт всегда в метрической системе; меняется только отображение.',
       units: 'Единицы отображения',
@@ -290,6 +290,123 @@ function extractFactorValue(entity, key, def) {
   }
 }
 
+/* ─── Standalone mode: history & forecast computation ────────────── */
+
+const THUNDER_CONDITIONS = ['lightning', 'lightning-rainy', 'thunderstorm', 'storm'];
+
+// Drop from the highest value within the last `hours` (matches the sensor
+// package semantics: pressure falling from a peak is the migraine trigger).
+function computeDropFromPeak(points, hours, current) {
+  const cutoff = Date.now() - hours * 3600e3;
+  let peak = current;
+  let seen = false;
+  for (const p of points) {
+    if (p.t >= cutoff) {
+      seen = true;
+      if (p.v > peak) peak = p.v;
+    }
+  }
+  if (!seen) return null;
+  return Math.max(0, peak - current);
+}
+
+// Signed change vs. the value closest to `hours` ago (±2h tolerance).
+function computeChange(points, hours, current) {
+  const target = Date.now() - hours * 3600e3;
+  let best = null;
+  let bestDiff = Infinity;
+  for (const p of points) {
+    const d = Math.abs(p.t - target);
+    if (d < bestDiff) { bestDiff = d; best = p; }
+  }
+  if (!best || bestDiff > 2 * 3600e3) return null;
+  return current - best.v;
+}
+
+// 2 = thunderstorm within the next 3 hours, 1 = later today, 0 = none.
+function thunderLevelFromHourly(forecast) {
+  const now = Date.now();
+  const todayStr = new Date().toDateString();
+  let next3 = false;
+  let today = false;
+  for (const f of forecast || []) {
+    if (!f || !f.datetime || !THUNDER_CONDITIONS.includes(f.condition)) continue;
+    const t = new Date(f.datetime).getTime();
+    if (isNaN(t)) continue;
+    if (t >= now - 3600e3 && t <= now + 3 * 3600e3) next3 = true;
+    if (new Date(f.datetime).toDateString() === todayStr) today = true;
+  }
+  return next3 ? 2 : today ? 1 : 0;
+}
+
+// Extract tomorrow's data from a daily forecast, or aggregate hourly entries.
+function tomorrowFromForecast(forecast, isHourly) {
+  const tomorrow = new Date(Date.now() + 24 * 3600e3).toDateString();
+  const entries = (forecast || []).filter(f => {
+    if (!f || !f.datetime) return false;
+    const d = new Date(f.datetime);
+    return !isNaN(d.getTime()) && d.toDateString() === tomorrow;
+  });
+  if (!entries.length) return null;
+  if (!isHourly) {
+    const e = entries[0];
+    return {
+      temp_max: parseNum(e.temperature),
+      temp_min: parseNum(e.templow),
+      uv: parseNum(e.uv_index),
+      rain: parseNum(e.precipitation_probability),
+      wind: parseNum(e.wind_speed),
+      thunder: THUNDER_CONDITIONS.includes(e.condition),
+      condition: e.condition || null,
+    };
+  }
+  const nums = (k) => entries.map(e => parseNum(e[k])).filter(v => v != null);
+  const temps = nums('temperature');
+  const max = (a) => a.length ? Math.max(...a) : null;
+  const min = (a) => a.length ? Math.min(...a) : null;
+  // Condition at midday is the most representative for an aggregated day
+  const midday = entries.reduce((best, e) =>
+    Math.abs(new Date(e.datetime).getHours() - 13) <
+    Math.abs(new Date(best.datetime).getHours() - 13) ? e : best, entries[0]);
+  return {
+    temp_max: max(temps),
+    temp_min: min(temps),
+    uv: max(nums('uv_index')),
+    rain: max(nums('precipitation_probability')),
+    wind: max(nums('wind_speed')),
+    thunder: entries.some(e => THUNDER_CONDITIONS.includes(e.condition)),
+    condition: midday.condition || null,
+  };
+}
+
+// Mirror of the sensor package's tomorrow scoring.
+function scoreTomorrow(d, windUnit) {
+  let pts = 0;
+  const { temp_max: tmax, temp_min: tmin, uv, rain } = d;
+  if (tmax != null && tmin != null) {
+    pts += (tmax > 30 || tmin < 5) ? 2 : (tmax > 28 || tmin < 8) ? 1 : 0;
+    const range = tmax - tmin;
+    pts += range >= 15 ? 2 : range >= 10 ? 1 : 0;
+  } else if (tmax != null) {
+    pts += tmax > 30 ? 2 : tmax > 28 ? 1 : 0;
+  }
+  if (uv != null) pts += uv >= 8 ? 2 : uv >= 6 ? 1 : 0;
+  if (d.wind != null) {
+    const w = windToKmh(d.wind, windUnit);
+    pts += w >= 50 ? 2 : w >= 35 ? 1 : 0;
+  }
+  if (d.thunder) pts += 2;
+  if (rain != null && rain >= 80) pts += 1;
+  return pts;
+}
+
+function tomorrowLevel(pts) {
+  if (pts >= 8) return 'Very High';
+  if (pts >= 5) return 'High';
+  if (pts >= 3) return 'Moderate';
+  return 'Low';
+}
+
 const RISK_COLOURS = {
   'Low':       '#4ade80',
   'Moderate':  '#facc15',
@@ -304,6 +421,13 @@ const WEATHER_ICONS = {
   'shower': 'mdi:weather-rainy', 'showers': 'mdi:weather-rainy',
   'storm': 'mdi:weather-lightning-rainy', 'thunderstorm': 'mdi:weather-lightning',
   'snow': 'mdi:weather-snowy', 'hail': 'mdi:weather-hail', 'fog': 'mdi:weather-fog', 'wind': 'mdi:weather-windy',
+  // Home Assistant standard weather conditions
+  'clear-night': 'mdi:weather-night', 'partlycloudy': 'mdi:weather-partly-cloudy',
+  'rainy': 'mdi:weather-rainy', 'pouring': 'mdi:weather-pouring',
+  'lightning': 'mdi:weather-lightning', 'lightning-rainy': 'mdi:weather-lightning-rainy',
+  'snowy': 'mdi:weather-snowy', 'snowy-rainy': 'mdi:weather-snowy-rainy',
+  'windy': 'mdi:weather-windy', 'windy-variant': 'mdi:weather-windy-variant',
+  'exceptional': 'mdi:alert-circle-outline',
 };
 
 /* ─── Scoring Engine ─────────────────────────────────────────────── */
@@ -627,6 +751,16 @@ class MigraineRiskCard extends HTMLElement {
     this.attachShadow({ mode: 'open' });
     this._built = false;
     this._prevHash = '';
+    this._hist = {};   // history series cache: 'eid|mode' → {ts, points, fetching}
+    this._fc = {};     // forecast store: 'eid|type' → {forecast, unsub, failed}
+  }
+
+  disconnectedCallback() {
+    for (const k of Object.keys(this._fc)) {
+      const u = this._fc[k] && this._fc[k].unsub;
+      if (u) { try { u(); } catch (e) { /* connection already closed */ } }
+    }
+    this._fc = {};
   }
 
   static getConfigElement() {
@@ -741,6 +875,152 @@ class MigraineRiskCard extends HTMLElement {
 
   /* ── Build / Update ── */
 
+  /* ─── Standalone data layer (no sensor package required) ──────── */
+
+  // Extraction that can derive values the entity itself doesn't expose:
+  // pressure/temperature changes from recorder history, thunderstorm from
+  // the hourly forecast subscription.
+  _extract(entity, key, def) {
+    if (entity && (key === 'pressure_6h' || key === 'pressure_24h' || key === 'temperature_change')) {
+      const mode = this._historyMode(entity, key);
+      if (mode) {
+        const unit = mode === 'pressure' ? 'hPa' : '°C';
+        const hours = key === 'pressure_24h' ? 24 : 6;
+        const current = this._currentMetric(entity, mode);
+        if (current == null) return { score: null, display: null, unit: '' };
+        const series = this._ensureHistory(entity.entity_id, mode);
+        if (!series || !series.points) return { score: null, display: null, unit, pending: true };
+        const val = mode === 'pressure'
+          ? computeDropFromPeak(series.points, hours, current)
+          : computeChange(series.points, hours, current);
+        if (val == null) return { score: null, display: null, unit, pending: true };
+        return { score: Math.abs(val), display: Math.round(val * 10) / 10, unit };
+      }
+    }
+    if (entity && key === 'thunderstorm' && entity.entity_id.startsWith('weather.')) {
+      const fc = this._ensureForecast(entity.entity_id, 'hourly');
+      if (fc && fc.length) {
+        const level = thunderLevelFromHourly(fc);
+        return { score: level, display: level, unit: '' };
+      }
+      // No forecast (yet) — fall through to current-condition detection
+    }
+    return extractFactorValue(entity, key, def);
+  }
+
+  // Decides whether history-based computation applies to this entity/factor.
+  _historyMode(entity, key) {
+    const a = entity.attributes || {};
+    const isWeather = entity.entity_id.startsWith('weather.');
+    if (key === 'temperature_change') {
+      if (isWeather) return a.temperature != null ? 'temperature' : null;
+      // An absolute-temperature sensor (not a precomputed change)
+      if (a.device_class === 'temperature') return 'temperature';
+      return null;
+    }
+    // pressure_6h / pressure_24h
+    if (isWeather) return a.pressure != null ? 'pressure' : null;
+    // A sensor holding absolute pressure: no atmospheric *change* is >300 hPa
+    const n = parseNum(entity.state);
+    if (n != null && pressureToHpa(n, a.unit_of_measurement) > 300) return 'pressure';
+    return null;
+  }
+
+  // Current metric-normalised value of the tracked quantity.
+  _currentMetric(entity, mode) {
+    const a = entity.attributes || {};
+    if (entity.entity_id.startsWith('weather.')) {
+      if (mode === 'pressure') return pressureToHpa(parseNum(a.pressure), a.pressure_unit);
+      return tempToC(parseNum(a.temperature), a.temperature_unit);
+    }
+    const n = parseNum(entity.state);
+    if (mode === 'pressure') return pressureToHpa(n, a.unit_of_measurement);
+    return tempToC(n, a.unit_of_measurement);
+  }
+
+  // Fetches ~25h of recorder history for the entity, normalised to metric.
+  // Cached for 15 minutes; triggers a re-render when data arrives.
+  _ensureHistory(eid, mode) {
+    const key = eid + '|' + mode;
+    const cached = this._hist[key];
+    const now = Date.now();
+    if (cached && (cached.fetching || now - cached.ts < 15 * 60e3)) return cached;
+    this._hist[key] = { ts: cached ? cached.ts : 0, points: cached ? cached.points : null, fetching: true };
+
+    const start = new Date(now - 25 * 3600e3).toISOString();
+    const end = new Date(now).toISOString();
+    this._hass.callApi('GET',
+      `history/period/${start}?end_time=${encodeURIComponent(end)}&filter_entity_id=${eid}`
+    ).then(res => {
+      const arr = (res && res[0]) || [];
+      const points = [];
+      for (const s of arr) {
+        const t = new Date(s.last_changed || s.last_updated).getTime();
+        if (isNaN(t)) continue;
+        const at = s.attributes || {};
+        let v;
+        if (eid.startsWith('weather.')) {
+          v = mode === 'pressure'
+            ? pressureToHpa(parseNum(at.pressure), at.pressure_unit)
+            : tempToC(parseNum(at.temperature), at.temperature_unit);
+        } else {
+          v = mode === 'pressure'
+            ? pressureToHpa(parseNum(s.state), at.unit_of_measurement)
+            : tempToC(parseNum(s.state), at.unit_of_measurement);
+        }
+        if (v != null) points.push({ t, v });
+      }
+      this._hist[key] = { ts: Date.now(), points, fetching: false };
+      this._update();
+    }).catch(() => {
+      // Keep stale points if we had them; retry after the cache window
+      this._hist[key] = { ts: Date.now(), points: cached ? cached.points : null, fetching: false };
+    });
+    return this._hist[key];
+  }
+
+  // Live forecast via weather/subscribe_forecast (how the built-in weather
+  // card works), with a one-shot weather.get_forecasts fallback.
+  // Returns the current forecast array or null while pending.
+  _ensureForecast(eid, type) {
+    const key = eid + '|' + type;
+    const store = this._fc[key];
+    if (store) return store.forecast;
+    this._fc[key] = { forecast: null };
+    const conn = this._hass && this._hass.connection;
+    if (conn && conn.subscribeMessage) {
+      conn.subscribeMessage(
+        (ev) => {
+          this._fc[key].forecast = (ev && ev.forecast) || [];
+          this._update();
+        },
+        { type: 'weather/subscribe_forecast', entity_id: eid, forecast_type: type }
+      ).then(unsub => { this._fc[key].unsub = unsub; })
+       .catch(() => { this._fc[key].failed = true; this._forecastFallback(eid, type); });
+    } else {
+      this._forecastFallback(eid, type);
+    }
+    return null;
+  }
+
+  _forecastFallback(eid, type) {
+    const conn = this._hass && this._hass.connection;
+    if (!conn || !conn.sendMessagePromise) return;
+    const key = eid + '|' + type;
+    conn.sendMessagePromise({
+      type: 'call_service',
+      domain: 'weather',
+      service: 'get_forecasts',
+      service_data: { type },
+      target: { entity_id: eid },
+      return_response: true,
+    }).then(res => {
+      const fc = res && res.response && res.response[eid] && res.response[eid].forecast;
+      this._fc[key] = { forecast: fc || [], failed: !fc };
+      this._update();
+    }).catch(() => { this._fc[key] = { forecast: [], failed: true }; });
+  }
+
   _update() {
     if (!this._hass || !this._config) return;
     ensureFonts();
@@ -824,7 +1104,7 @@ class MigraineRiskCard extends HTMLElement {
       const def = FACTORS[key];
       const eid = c[def.configKey];
       const entity = h.states[eid];
-      const extracted = extractFactorValue(entity, key, def);
+      const extracted = this._extract(entity, key, def);
 
       let pts;
       if (useIntegration && riskScoreState) {
@@ -925,6 +1205,8 @@ class MigraineRiskCard extends HTMLElement {
 
     const ex = extracted || extractFactorValue(entity, key, def);
 
+    if (ex.pending) return '…';
+
     if (key === 'thunderstorm') {
       const code = String(ex.score ?? st);
       return tr(this._lang, 'storm.' + code, STORM_DISPLAY[code] || code);
@@ -940,7 +1222,10 @@ class MigraineRiskCard extends HTMLElement {
       const conv = convertToImperial(key, ex.score); // score is metric-normalised
       if (conv) return fmtNum(conv.value) + conv.unit;
     }
-    return fmtNum(ex.display ?? ex.score) + (ex.unit || '');
+    let unit = ex.unit || '';
+    // "0AQI" → "0 AQI": letter-starting units get a separating space
+    if (unit && !unit.startsWith(' ') && /^[a-zа-яё]/i.test(unit)) unit = ' ' + unit;
+    return fmtNum(ex.display ?? ex.score) + unit;
   }
 
   _refreshForecast(card) {
@@ -968,6 +1253,13 @@ class MigraineRiskCard extends HTMLElement {
       card.appendChild(bar);
     }
     bar.querySelector('.forecast-title').textContent = tr(this._lang, 'forecast_title');
+
+    // Standalone mode: entity_forecast is a weather entity — compute
+    // tomorrow's risk in-card from its forecast.
+    if (fid.startsWith('weather.')) {
+      this._refreshForecastFromWeather(bar, entity);
+      return;
+    }
 
     const attrs = entity.attributes || {};
     const fScore = parseNum(entity.state) ?? 0;
@@ -998,9 +1290,71 @@ class MigraineRiskCard extends HTMLElement {
     const fLevelText = tr(this._lang, 'level.' + fLevel, fLevel);
     bar.querySelector('.forecast-risk').textContent =
       `${fLevelText} (${Math.round(fScore)} ${tr(this._lang, 'pts')})`;
+    const metaVal = (v) => {
+      if (v == null) return '—';
+      const s = String(v).trim();
+      return (s === '' || s === 'N/A' || s === 'unknown' || s === 'unavailable' || s === 'None') ? '—' : s;
+    };
     bar.querySelector('.forecast-meta').textContent =
-      `${attrs.temp_min || '—'}–${attrs.temp_max || '—'} · UV ${attrs.uv_index ?? '—'} · ${tr(this._lang, 'rain')} ${attrs.rain_chance || '—'}`;
+      `${metaVal(attrs.temp_min)}–${metaVal(attrs.temp_max)} · UV ${metaVal(attrs.uv_index)} · ${tr(this._lang, 'rain')} ${metaVal(attrs.rain_chance)}`;
     bar.querySelector('.forecast-badge').textContent = Math.round(fScore);
+  }
+
+  // Tomorrow's risk computed in-card from a weather entity's forecast.
+  _refreshForecastFromWeather(bar, entity) {
+    const eid = entity.entity_id;
+    const daily = this._ensureForecast(eid, 'daily');
+    let data = null;
+    let isHourly = false;
+
+    if (daily && daily.length) {
+      data = tomorrowFromForecast(daily, false);
+    }
+    const dailyFailed = this._fc[eid + '|daily'] && this._fc[eid + '|daily'].failed;
+    const dailyEmpty = daily && daily.length === 0;
+    if (!data && (dailyFailed || dailyEmpty || (daily && !tomorrowFromForecast(daily, false)))) {
+      // Daily unsupported (e.g. hourly-only integrations) — aggregate hourly
+      const hourly = this._ensureForecast(eid, 'hourly');
+      if (hourly && hourly.length) {
+        data = tomorrowFromForecast(hourly, true);
+        isHourly = true;
+      }
+    }
+
+    if (!data) {
+      // Forecast not received yet (or entity has none)
+      bar.querySelector('.forecast-risk').textContent = '…';
+      bar.querySelector('.forecast-meta').textContent = '—';
+      bar.querySelector('.forecast-badge').textContent = '';
+      return;
+    }
+
+    const a = entity.attributes || {};
+    const pts = scoreTomorrow(data, a.wind_speed_unit);
+    const level = tomorrowLevel(pts);
+    const colour = riskColour(level);
+    bar.closest('.card').style.setProperty('--forecast-color', colour);
+
+    const iconName = WEATHER_ICONS[data.condition] || 'mdi:weather-partly-cloudy';
+    const fIconEl = bar.querySelector('.forecast-icon');
+    if (!fIconEl.querySelector('ha-icon')) {
+      fIconEl.innerHTML = '';
+      const hi = document.createElement('ha-icon');
+      hi.setAttribute('icon', iconName);
+      fIconEl.appendChild(hi);
+    } else {
+      fIconEl.querySelector('ha-icon').setAttribute('icon', iconName);
+    }
+
+    const levelText = tr(this._lang, 'level.' + level, level);
+    bar.querySelector('.forecast-risk').textContent =
+      `${levelText} (${pts} ${tr(this._lang, 'pts')})`;
+
+    const tUnit = a.temperature_unit || '°C';
+    const num = (v, suffix) => v == null ? '—' : fmtNum(Math.round(v * 10) / 10) + (suffix || '');
+    bar.querySelector('.forecast-meta').textContent =
+      `${num(data.temp_min)}–${num(data.temp_max, tUnit)} · UV ${num(data.uv)} · ${tr(this._lang, 'rain')} ${num(data.rain, '%')}`;
+    bar.querySelector('.forecast-badge').textContent = pts;
   }
 }
 
