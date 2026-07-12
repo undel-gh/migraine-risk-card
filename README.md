@@ -48,7 +48,7 @@ The result: everything updates through HACS with one click. The sensor package i
 
 > Modern HACS registers the dashboard resource for you — you do **not** need to add a resource manually under *Settings → Dashboards → Resources*. Adding one by hand creates a **second, un-cache-busted copy** of the card, which loads an old version alongside the new one. If your card ever looks out of date or the language selector vanishes, check for a duplicate resource — see [Troubleshooting](#troubleshooting).
 
-After downloading, hard-refresh your browser (**Ctrl+F5**). Open the browser console (F12) and you should see a single banner: `🧠 Migraine Risk Card v3.0.3`.
+After downloading, hard-refresh your browser (**Ctrl+F5**). Open the browser console (F12) and you should see a single banner: `🧠 Migraine Risk Card v3.1.0`.
 
 ### Step 2 — Add the card to a dashboard
 
@@ -94,6 +94,7 @@ Every factor is optional. Omit a line and that tile disappears and the gauge max
 | `displayUnits` | `metric` \| `imperial` | Display units only; scoring is always metric. Default `metric`. |
 | `language` | `auto` \| `en` \| `ru` | UI language. Default `auto` (from Home Assistant). |
 | `max_score` | number | Override the gauge maximum (integration mode). Leave empty for automatic. |
+| `thresholds` | object | Personal trigger thresholds — see [Calibration](#calibrating-to-your-personal-triggers). |
 
 > **Standalone vs integration mode:** if `entity_risk_score` is set, the card trusts that sensor and ignores its own per-factor scoring. For the self-sufficient setup above, **leave `entity_risk_score` and `entity_risk_level` empty** so the gauge reflects the tiles you configured.
 
@@ -129,6 +130,42 @@ The bundled `sensor-package/migraine_sensors.yaml` reproduces the scoring **serv
 
 The package fetches forecasts with the modern `weather.get_forecasts` action (weather entities no longer expose a `forecast` attribute) and detects thunderstorms from both the forecast and warning/forecast text — English and Russian keywords are recognised.
 
+## Calibrating to Your Personal Triggers
+
+The default thresholds are research-based averages, but migraine triggers are highly individual — one person reacts to a 4 hPa pressure drop, another only past 10. Since v3.1 every scoring threshold can be tuned to your own history, no YAML editing required.
+
+**With the sensor package installed (easiest):** go to **Settings → Devices & Services → Helpers** and search "Migraine Threshold". You'll find 20 sliders — the point steps for every factor (e.g. *Pressure 6h → 1 pt*, default 4 hPa). Change a value and both the server-side scoring **and the card** pick it up immediately: the card reads the same helpers automatically, so one calibration applies everywhere.
+
+**Without the package:** create `input_number` helpers with the well-known IDs (`input_number.migraine_threshold_pressure_6h_1` … see the table below), or set thresholds directly in the card config:
+
+```yaml
+type: custom:migraine-risk-card
+# ...
+thresholds:
+  pressure_6h: [3, 5, 7, 9]   # point ladder: ≥3 → 1pt, ≥5 → 2 … 
+  humidity_low: 25             # dry-air trigger
+  uv: [5, 7]
+```
+
+Card config takes precedence over helpers; helpers take precedence over defaults. Available keys and their defaults:
+
+| Key | Default | Meaning |
+|---|---|---|
+| `pressure_6h` | `[4, 6, 8, 10]` | hPa drop over 6h → 1/2/3/4 pts |
+| `pressure_24h` | `[6, 10, 14]` | hPa drop over 24h → 1/2/3 pts |
+| `humidity_low` | `30` | below this % → 1 pt (dry air) |
+| `humidity_high` | `80` | above this % → 2 pts |
+| `temp_hot` | `30` | above this °C → 2 pts |
+| `temp_cold` | `5` | below this °C → 2 pts |
+| `temp_change` | `[5, 8]` | °C change over 6h → 1/2 pts |
+| `wind` | `[35, 50]` | km/h → 1/2 pts |
+| `uv` | `[6, 8]` | UV index → 1/2 pts |
+| `aqi` | `[50, 100, 150]` | AQI above step → 1/2/3 pts |
+
+Matching helper IDs: array keys get `_1`, `_2`, … suffixes (`migraine_threshold_uv_1`), scalar keys use the name as-is (`migraine_threshold_humidity_low`).
+
+**How to calibrate:** when a migraine hits, note the card's factor tiles (or the `sensor.migraine_risk_score` attributes). If attacks reliably arrive at pressure drops the card scores 0–1, lower the pressure steps; if UV never seems to matter for you, raise the UV steps so the factor stays quiet. Adjust one factor at a time and give each change a couple of weeks of history before the next tweak.
+
 ## How the Scoring Works
 
 Nine factors, each scored on a 0–2 or 0–4 scale:
@@ -146,7 +183,7 @@ Nine factors, each scored on a 0–2 or 0–4 scale:
 | Air quality (AQI) | 3 | 51–100: 1 · 101–150: 2 · 151+: 3 |
 | **Total** | **22** | |
 
-**Risk levels:** Low (0–3) · Moderate (4–7) · High (8–11) · Very High (12+). The gauge maximum reflects only the factors you actually configure.
+**Risk levels:** Low (0–3) · Moderate (4–7) · High (8–11) · Very High (12+). The gauge maximum reflects only the factors you actually configure. All thresholds above are the defaults — see [Calibrating to Your Personal Triggers](#calibrating-to-your-personal-triggers).
 
 ## Troubleshooting
 
