@@ -15,7 +15,7 @@
  * © 2026 — MIT Licence
  */
 
-const CARD_VERSION = '3.1.0';
+const CARD_VERSION = '3.1.1';
 
 /* ─── Calibration (personal threshold overrides) ─────────────────────
  * Priority: card config `thresholds:` → input_number helpers → defaults.
@@ -196,6 +196,23 @@ const I18N = {
       lang_auto: 'Auto (Home Assistant)',
       max_score: 'Gauge maximum (integration mode)',
       max_score_hint: 'Leave empty for automatic.',
+      title: 'Card title',
+      title_hint: 'Optional — useful when showing several locations.',
+      calibration: 'Calibration — personal thresholds',
+      calibration_hint: 'Migraine triggers are individual. Leave a field empty to use the input_number helper (if present) or the research default shown as the placeholder.',
+      pts_step: 'pts',
+      th: {
+        pressure_6h: 'Pressure change 6h (hPa)',
+        pressure_24h: 'Pressure change 24h (hPa)',
+        humidity_low: 'Humidity — dry, 1 pt (%)',
+        humidity_high: 'Humidity — humid, 2 pts (%)',
+        temp_hot: 'Hot temperature, 2 pts (°C)',
+        temp_cold: 'Cold temperature, 2 pts (°C)',
+        temp_change: 'Temperature change 6h (°C)',
+        wind: 'Wind speed (km/h)',
+        uv: 'UV index',
+        aqi: 'Air quality (AQI)',
+      },
     },
   },
   ru: {
@@ -235,6 +252,23 @@ const I18N = {
       lang_auto: 'Авто (из Home Assistant)',
       max_score: 'Максимум шкалы (режим интеграции)',
       max_score_hint: 'Оставьте пустым для автоматического расчёта.',
+      title: 'Заголовок карточки',
+      title_hint: 'Необязательно — удобно, когда карточек несколько (например, разные дома).',
+      calibration: 'Калибровка — личные пороги',
+      calibration_hint: 'Триггеры мигрени индивидуальны. Пустое поле означает: взять значение из хелпера input_number (если он есть) или научный дефолт, показанный в подсказке.',
+      pts_step: 'балл.',
+      th: {
+        pressure_6h: 'Изменение давления 6ч (гПа)',
+        pressure_24h: 'Изменение давления 24ч (гПа)',
+        humidity_low: 'Влажность — сухо, 1 балл (%)',
+        humidity_high: 'Влажность — влажно, 2 балла (%)',
+        temp_hot: 'Жара, 2 балла (°C)',
+        temp_cold: 'Холод, 2 балла (°C)',
+        temp_change: 'Изменение температуры 6ч (°C)',
+        wind: 'Скорость ветра (км/ч)',
+        uv: 'УФ-индекс',
+        aqi: 'Качество воздуха (AQI)',
+      },
     },
   },
 };
@@ -648,6 +682,15 @@ const CARD_STYLES = `
   }
 
   /* ── Factors ── */
+  .card-title {
+    font-size: 16px;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+    color: var(--primary-text-color, #e5e7eb);
+    text-align: center;
+    margin-bottom: 4px;
+  }
+  .card-title:empty { display: none; }
   .factors-header {
     font-family: 'Space Mono', 'Courier New', monospace;
     font-size: 9px;
@@ -1111,6 +1154,7 @@ class MigraineRiskCard extends HTMLElement {
     const card = document.createElement('div');
     card.className = 'card';
     card.innerHTML = `
+      <div class="card-title"></div>
       <div class="gauge-wrap">
         <svg class="gauge-svg" viewBox="0 0 200 110">
           <path class="gauge-track" d="M 20 100 A 80 80 0 0 1 180 100"/>
@@ -1132,6 +1176,7 @@ class MigraineRiskCard extends HTMLElement {
       gaugeScore: card.querySelector('.gauge-score'),
       gaugeMax:   card.querySelector('.gauge-max'),
       riskLabel:  card.querySelector('.risk-label'),
+      title:      card.querySelector('.card-title'),
       factorsHdr: card.querySelector('.factors-header'),
       factorGrid: card.querySelector('.factors-grid'),
     };
@@ -1143,6 +1188,7 @@ class MigraineRiskCard extends HTMLElement {
     const c = this._config;
     const el = this._els;
     const active = this._activeFactors();
+    if (el.title) el.title.textContent = c.title || '';
 
     const lang = this._lang || resolveLang(h, c);
     this._lang = lang;
@@ -1510,6 +1556,37 @@ class MigraineRiskCardEditor extends HTMLElement {
         display: block;
         width: 100%;
       }
+      details.section > summary {
+        cursor: pointer;
+        list-style: none;
+        user-select: none;
+      }
+      details.section > summary::-webkit-details-marker { display: none; }
+      details.section > summary::after {
+        content: '▸';
+        margin-left: 6px;
+        opacity: 0.6;
+        font-size: 12px;
+      }
+      details.section[open] > summary::after { content: '▾'; }
+      .th-row {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+      .th-step {
+        flex: 1 1 70px;
+        min-width: 70px;
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+      }
+      .th-cap {
+        font-size: 11px;
+        opacity: 0.65;
+        text-transform: uppercase;
+        letter-spacing: 0.4px;
+      }
       .native-select, .native-input {
         display: block;
         width: 100%;
@@ -1567,6 +1644,7 @@ class MigraineRiskCardEditor extends HTMLElement {
 
     // ── Section: Display ──
     container.appendChild(this._displaySection());
+    container.appendChild(this._calibrationSection());
 
     sr.appendChild(container);
     this._rendered = true;
@@ -1596,6 +1674,26 @@ class MigraineRiskCardEditor extends HTMLElement {
     hintEl.textContent = this._t('editor.display_hint');
     hintEl.style.marginBottom = '12px';
     section.appendChild(hintEl);
+
+    // Card title (optional)
+    const titleField = document.createElement('div');
+    titleField.className = 'field';
+    const titleLbl = document.createElement('div');
+    titleLbl.className = 'field-label';
+    titleLbl.textContent = this._t('editor.title');
+    titleField.appendChild(titleLbl);
+    const titleInput = document.createElement('input');
+    titleInput.className = 'native-input';
+    titleInput.setAttribute('type', 'text');
+    titleInput.placeholder = this._t('editor.title_hint');
+    titleInput.value = this._config.title || '';
+    titleInput.addEventListener('change', (e) => {
+      const v = (e.target.value || '').trim();
+      if (v) this._config.title = v; else delete this._config.title;
+      this._fire();
+    });
+    titleField.appendChild(titleInput);
+    section.appendChild(titleField);
 
     // Units select
     section.appendChild(this._selectField(
@@ -1649,6 +1747,89 @@ class MigraineRiskCardEditor extends HTMLElement {
     section.appendChild(msField);
 
     return section;
+  }
+
+  // Collapsible calibration panel. Empty field → helper → default.
+  _calibrationSection() {
+    const details = document.createElement('details');
+    details.className = 'section';
+
+    const summary = document.createElement('summary');
+    summary.className = 'section-title';
+    const icon = document.createElement('ha-icon');
+    icon.setAttribute('icon', 'mdi:tune-variant');
+    summary.appendChild(icon);
+    summary.appendChild(document.createTextNode(' ' + this._t('editor.calibration')));
+    details.appendChild(summary);
+
+    const hint = document.createElement('div');
+    hint.className = 'hint';
+    hint.textContent = this._t('editor.calibration_hint');
+    hint.style.marginBottom = '12px';
+    details.appendChild(hint);
+
+    const cfg = this._config.thresholds || {};
+    // Effective value if this field were left empty (helper, else default)
+    const effective = (name, idx) => {
+      const hid = THRESHOLD_HELPER_PREFIX + name + (idx != null ? '_' + (idx + 1) : '');
+      const hv = parseNum(this._hass && this._hass.states && this._hass.states[hid] && this._hass.states[hid].state);
+      if (hv != null) return hv;
+      const d = THRESHOLD_DEFAULTS[name];
+      return idx != null ? d[idx] : d;
+    };
+
+    const write = (name, idx, raw) => {
+      const t = Object.assign({}, this._config.thresholds || {});
+      const n = parseNum(raw);
+      if (Array.isArray(THRESHOLD_DEFAULTS[name])) {
+        const arr = Array.isArray(t[name]) ? t[name].slice() : new Array(THRESHOLD_DEFAULTS[name].length).fill(null);
+        arr[idx] = (n != null ? n : null);
+        // Drop the key entirely if every step was cleared
+        if (arr.every(v => v == null)) delete t[name]; else t[name] = arr;
+      } else {
+        if (n != null) t[name] = n; else delete t[name];
+      }
+      if (Object.keys(t).length) this._config.thresholds = t;
+      else delete this._config.thresholds;
+      this._fire();
+    };
+
+    for (const [name, def] of Object.entries(THRESHOLD_DEFAULTS)) {
+      const field = document.createElement('div');
+      field.className = 'field';
+      const lbl = document.createElement('div');
+      lbl.className = 'field-label';
+      lbl.textContent = this._t('editor.th.' + name, name);
+      field.appendChild(lbl);
+
+      const row = document.createElement('div');
+      row.className = 'th-row';
+      const steps = Array.isArray(def) ? def.length : 1;
+      for (let i = 0; i < steps; i++) {
+        const idx = Array.isArray(def) ? i : null;
+        const wrap = document.createElement('label');
+        wrap.className = 'th-step';
+        if (Array.isArray(def)) {
+          const cap = document.createElement('span');
+          cap.className = 'th-cap';
+          cap.textContent = (i + 1) + ' ' + this._t('editor.pts_step');
+          wrap.appendChild(cap);
+        }
+        const inp = document.createElement('input');
+        inp.className = 'native-input';
+        inp.setAttribute('type', 'number');
+        inp.setAttribute('step', 'any');
+        inp.placeholder = String(effective(name, idx));
+        const cur = Array.isArray(def) ? (Array.isArray(cfg[name]) ? cfg[name][i] : null) : cfg[name];
+        inp.value = (cur == null || cur === '') ? '' : String(cur);
+        inp.addEventListener('change', (e) => write(name, idx, e.target.value));
+        wrap.appendChild(inp);
+        row.appendChild(wrap);
+      }
+      field.appendChild(row);
+      details.appendChild(field);
+    }
+    return details;
   }
 
   _selectField(label, options, current, apply) {
