@@ -1,5 +1,9 @@
 # Migraine Risk Card for Home Assistant
 
+[![hacs_badge](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/hacs/integration)
+![GitHub release](https://img.shields.io/github/v/release/undel-gh/Redmond-oven-card)
+![License](https://img.shields.io/github/license/undel-gh/Redmond-oven-card)
+
 A science-backed environmental migraine risk monitoring card for Home Assistant. It tracks up to 9 weather and air-quality factors known to trigger migraines and shows a composite risk score on a visual gauge — plus tomorrow's outlook.
 
 ![Migraine Risk Card](https://raw.githubusercontent.com/undel-gh/migraine-risk-card/main/docs/card-preview.png)
