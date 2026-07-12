@@ -1,11 +1,6 @@
 /**
- * Migraine Risk Card v2.1.0
+ * Migraine Risk Card v3.0.3
  * Home Assistant Custom Lovelace Card
- *
- * Works two ways:
- *   1. With the Migraine Risk custom integration (auto-detected)
- *   2. Standalone — point it at any weather entities and the card
- *      computes the risk score internally.
  *
  * All factor entities are optional. The card only shows what you configure.
  *
@@ -15,7 +10,8 @@
  * © 2026 — MIT Licence
  */
 
-const CARD_VERSION = '3.0.1';
+
+const CARD_VERSION = '3.0.3';
 
 console.info(
   `%c🧠 Migraine Risk Card %cv${CARD_VERSION}`,
