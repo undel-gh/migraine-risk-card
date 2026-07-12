@@ -1,6 +1,11 @@
 /**
- * Migraine Risk Card v3.0.3
+ * Migraine Risk Card v2.1.0
  * Home Assistant Custom Lovelace Card
+ *
+ * Works two ways:
+ *   1. With the Migraine Risk custom integration (auto-detected)
+ *   2. Standalone — point it at any weather entities and the card
+ *      computes the risk score internally.
  *
  * All factor entities are optional. The card only shows what you configure.
  *
@@ -10,7 +15,59 @@
  * © 2026 — MIT Licence
  */
 
-const CARD_VERSION = '3.0.3';
+const CARD_VERSION = '3.1.0';
+
+/* ─── Calibration (personal threshold overrides) ─────────────────────
+ * Priority: card config `thresholds:` → input_number helpers → defaults.
+ * Helper IDs follow a shared contract with the sensor package:
+ *   input_number.migraine_threshold_<name>        (scalar thresholds)
+ *   input_number.migraine_threshold_<name>_<step> (ladder thresholds)
+ * Arrays are point ladders: value ≥ arr[i] scores i+1 points
+ * (AQI uses strict >, matching the 51–100 banding). */
+const THRESHOLD_DEFAULTS = {
+  pressure_6h: [4, 6, 8, 10],
+  pressure_24h: [6, 10, 14],
+  humidity_low: 30,
+  humidity_high: 80,
+  temp_hot: 30,
+  temp_cold: 5,
+  temp_change: [5, 8],
+  wind: [35, 50],
+  uv: [6, 8],
+  aqi: [50, 100, 150],
+};
+const THRESHOLD_HELPER_PREFIX = 'input_number.migraine_threshold_';
+
+function thresholdHelperIds() {
+  const ids = [];
+  for (const [name, def] of Object.entries(THRESHOLD_DEFAULTS)) {
+    if (Array.isArray(def)) def.forEach((_, i) => ids.push(THRESHOLD_HELPER_PREFIX + name + '_' + (i + 1)));
+    else ids.push(THRESHOLD_HELPER_PREFIX + name);
+  }
+  return ids;
+}
+
+function resolveThresholds(hass, config) {
+  const cfg = (config && config.thresholds) || {};
+  const helperVal = (id) => parseNum(hass && hass.states && hass.states[id] && hass.states[id].state);
+  const out = {};
+  for (const [name, def] of Object.entries(THRESHOLD_DEFAULTS)) {
+    if (Array.isArray(def)) {
+      out[name] = def.map((d, i) => {
+        const c = Array.isArray(cfg[name]) ? parseNum(cfg[name][i]) : null;
+        if (c != null) return c;
+        const h = helperVal(THRESHOLD_HELPER_PREFIX + name + '_' + (i + 1));
+        return h != null ? h : d;
+      });
+    } else {
+      const c = parseNum(cfg[name]);
+      if (c != null) { out[name] = c; continue; }
+      const h = helperVal(THRESHOLD_HELPER_PREFIX + name);
+      out[name] = h != null ? h : def;
+    }
+  }
+  return out;
+}
 
 console.info(
   `%c🧠 Migraine Risk Card %cv${CARD_VERSION}`,
@@ -28,7 +85,6 @@ const FACTORS = {
     maxPts: 4,
     configKey: 'entity_pressure_6h',
     label: 'Pressure Change (6h)',
-    thresholds: [[4,1],[6,2],[8,3],[10,4]],
   },
   pressure_24h: {
     name: 'Pressure 24h',
@@ -37,7 +93,6 @@ const FACTORS = {
     maxPts: 3,
     configKey: 'entity_pressure_24h',
     label: 'Pressure Change (24h)',
-    thresholds: [[6,1],[10,2],[14,3]],
   },
   humidity: {
     name: 'Humidity',
@@ -46,7 +101,6 @@ const FACTORS = {
     maxPts: 2,
     configKey: 'entity_humidity',
     label: 'Humidity',
-    scoreFn: v => v > 80 ? 2 : v < 30 ? 1 : 0,
   },
   temperature: {
     name: 'Temperature',
@@ -55,7 +109,6 @@ const FACTORS = {
     maxPts: 2,
     configKey: 'entity_temperature',
     label: 'Current Temperature',
-    scoreFn: v => (v > 30 || v < 5) ? 2 : 0,
   },
   temperature_change: {
     name: 'Temp Change',
@@ -64,7 +117,6 @@ const FACTORS = {
     maxPts: 2,
     configKey: 'entity_temperature_change',
     label: 'Temperature Change (6h)',
-    thresholds: [[5,1],[8,2]],
   },
   wind: {
     name: 'Wind',
@@ -73,7 +125,6 @@ const FACTORS = {
     maxPts: 2,
     configKey: 'entity_wind_speed',
     label: 'Wind Speed',
-    thresholds: [[35,1],[50,2]],
   },
   uv: {
     name: 'UV',
@@ -82,7 +133,6 @@ const FACTORS = {
     maxPts: 2,
     configKey: 'entity_uv_index',
     label: 'UV Index',
-    thresholds: [[6,1],[8,2]],
   },
   thunderstorm: {
     name: 'Storm',
@@ -91,7 +141,6 @@ const FACTORS = {
     maxPts: 2,
     configKey: 'entity_storm',
     label: 'Storm / Lightning',
-    scoreFn: v => Math.min(Math.round(parseFloat(v) || 0), 2),
   },
   air_quality: {
     name: 'AQI',
@@ -100,7 +149,6 @@ const FACTORS = {
     maxPts: 3,
     configKey: 'entity_air_quality',
     label: 'Air Quality (AQI)',
-    scoreFn: v => v <= 50 ? 0 : v <= 100 ? 1 : v <= 150 ? 2 : 3,
   },
 };
 
@@ -379,20 +427,22 @@ function tomorrowFromForecast(forecast, isHourly) {
 }
 
 // Mirror of the sensor package's tomorrow scoring.
-function scoreTomorrow(d, windUnit) {
+function scoreTomorrow(d, windUnit, th) {
+  const t = th || THRESHOLD_DEFAULTS;
+  const hot = t.temp_hot, cold = t.temp_cold;
   let pts = 0;
   const { temp_max: tmax, temp_min: tmin, uv, rain } = d;
   if (tmax != null && tmin != null) {
-    pts += (tmax > 30 || tmin < 5) ? 2 : (tmax > 28 || tmin < 8) ? 1 : 0;
+    pts += (tmax > hot || tmin < cold) ? 2 : (tmax > hot - 2 || tmin < cold + 3) ? 1 : 0;
     const range = tmax - tmin;
     pts += range >= 15 ? 2 : range >= 10 ? 1 : 0;
   } else if (tmax != null) {
-    pts += tmax > 30 ? 2 : tmax > 28 ? 1 : 0;
+    pts += tmax > hot ? 2 : tmax > hot - 2 ? 1 : 0;
   }
-  if (uv != null) pts += uv >= 8 ? 2 : uv >= 6 ? 1 : 0;
+  if (uv != null) pts += uv >= t.uv[1] ? 2 : uv >= t.uv[0] ? 1 : 0;
   if (d.wind != null) {
     const w = windToKmh(d.wind, windUnit);
-    pts += w >= 50 ? 2 : w >= 35 ? 1 : 0;
+    pts += w >= t.wind[1] ? 2 : w >= t.wind[0] ? 1 : 0;
   }
   if (d.thunder) pts += 2;
   if (rain != null && rain >= 80) pts += 1;
@@ -431,20 +481,28 @@ const WEATHER_ICONS = {
 
 /* ─── Scoring Engine ─────────────────────────────────────────────── */
 
-function scoreFromThresholds(value, thresholds) {
-  let pts = 0;
-  for (const [min, score] of thresholds) {
-    if (value >= min) pts = score;
+function computeFactorPoints(factorKey, rawValue, th) {
+  if (rawValue == null || !FACTORS[factorKey]) return 0;
+  const t = th || THRESHOLD_DEFAULTS;
+  // value ≥ step[i] → i+1 points (gte); strict > variant for AQI banding
+  const ladder = (val, steps, strict) => {
+    let pts = 0;
+    steps.forEach((min, i) => { if (strict ? val > min : val >= min) pts = i + 1; });
+    return pts;
+  };
+  const v = rawValue;
+  switch (factorKey) {
+    case 'pressure_6h': return ladder(Math.abs(v), t.pressure_6h);
+    case 'pressure_24h': return ladder(Math.abs(v), t.pressure_24h);
+    case 'humidity': return v > t.humidity_high ? 2 : v < t.humidity_low ? 1 : 0;
+    case 'temperature': return (v > t.temp_hot || v < t.temp_cold) ? 2 : 0;
+    case 'temperature_change': return ladder(Math.abs(v), t.temp_change);
+    case 'wind': return ladder(v, t.wind);
+    case 'uv': return ladder(v, t.uv);
+    case 'thunderstorm': return Math.min(Math.round(parseFloat(v) || 0), 2);
+    case 'air_quality': return Math.min(ladder(v, t.aqi, true), FACTORS.air_quality.maxPts);
+    default: return 0;
   }
-  return pts;
-}
-
-function computeFactorPoints(factorKey, rawValue) {
-  const def = FACTORS[factorKey];
-  if (!def || rawValue == null) return 0;
-  if (def.scoreFn) return def.scoreFn(rawValue);
-  if (def.thresholds) return scoreFromThresholds(Math.abs(rawValue), def.thresholds);
-  return 0;
 }
 
 function scoreToLevel(score) {
@@ -860,6 +918,11 @@ class MigraineRiskCard extends HTMLElement {
       const a = e?.attributes || {};
       s += (e?.state || '') + ';' + (a.risk_level || '') + ';' + (a.temp_min ?? '') + ';' + (a.temp_max ?? '') + ';' + (a.uv_index ?? '') + ';' + (a.rain_chance ?? '') + '|';
     }
+    for (const tid of thresholdHelperIds()) {
+      const e = h.states[tid];
+      if (e) s += e.state + ';';
+    }
+    s += '|';
     for (const k of FACTOR_KEYS) {
       const eid = c[FACTORS[k].configKey];
       if (!eid) continue;
@@ -1110,6 +1173,7 @@ class MigraineRiskCard extends HTMLElement {
     const useIntegration = this._hasIntegration();
     const riskScoreState = useIntegration ? h.states[c.entity_risk_score] : null;
 
+    const th = resolveThresholds(h, c);
     for (const key of active) {
       const def = FACTORS[key];
       const eid = c[def.configKey];
@@ -1119,10 +1183,10 @@ class MigraineRiskCard extends HTMLElement {
       let pts;
       if (useIntegration && riskScoreState) {
         // Integration mode: read points from risk_score attributes
-        pts = riskScoreState.attributes?.[key + '_points'] ?? computeFactorPoints(key, extracted.score);
+        pts = riskScoreState.attributes?.[key + '_points'] ?? computeFactorPoints(key, extracted.score, th);
       } else {
         // Standalone mode: compute from metric-normalised value
-        pts = computeFactorPoints(key, extracted.score);
+        pts = computeFactorPoints(key, extracted.score, th);
       }
 
       totalScore += pts;
@@ -1340,7 +1404,7 @@ class MigraineRiskCard extends HTMLElement {
     }
 
     const a = entity.attributes || {};
-    const pts = scoreTomorrow(data, a.wind_speed_unit);
+    const pts = scoreTomorrow(data, a.wind_speed_unit, resolveThresholds(this._hass, this._config));
     const level = tomorrowLevel(pts);
     const colour = riskColour(level);
     bar.closest('.card').style.setProperty('--forecast-color', colour);
