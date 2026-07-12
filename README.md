@@ -1,9 +1,5 @@
 # Migraine Risk Card for Home Assistant
 
-[![hacs_badge](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/hacs/integration)
-![GitHub release](https://img.shields.io/github/v/release/undel-gh/Redmond-oven-card)
-![License](https://img.shields.io/github/license/undel-gh/Redmond-oven-card)
-
 A science-backed environmental migraine risk monitoring card for Home Assistant. It tracks up to 9 weather and air-quality factors known to trigger migraines and shows a composite risk score on a visual gauge — plus tomorrow's outlook.
 
 ![Migraine Risk Card](https://raw.githubusercontent.com/undel-gh/migraine-risk-card/main/docs/card-preview.png)
@@ -52,7 +48,7 @@ The result: everything updates through HACS with one click. The sensor package i
 
 > Modern HACS registers the dashboard resource for you — you do **not** need to add a resource manually under *Settings → Dashboards → Resources*. Adding one by hand creates a **second, un-cache-busted copy** of the card, which loads an old version alongside the new one. If your card ever looks out of date or the language selector vanishes, check for a duplicate resource — see [Troubleshooting](#troubleshooting).
 
-After downloading, hard-refresh your browser (**Ctrl+F5**). Open the browser console (F12) and you should see a single banner: `🧠 Migraine Risk Card v3.1.0`.
+After downloading, hard-refresh your browser (**Ctrl+F5**). Open the browser console (F12) and you should see a single banner: `🧠 Migraine Risk Card v3.1.1`.
 
 ### Step 2 — Add the card to a dashboard
 
@@ -95,6 +91,7 @@ Every factor is optional. Omit a line and that tile disappears and the gauge max
 | `entity_forecast` | entity | Tomorrow's outlook. A `weather.*` entity is computed in-card; a `sensor.migraine_risk_forecast_tomorrow` from the package is read directly. |
 | `entity_risk_score` | entity | *Integration mode only.* A pre-computed score sensor from the package. **Leave empty for standalone mode** — otherwise the card shows this value instead of its own calculation. |
 | `entity_risk_level` | entity | *Integration mode only.* Pre-computed risk level from the package. |
+| `title` | string | Optional heading shown on the card — handy when you run one card per location. |
 | `displayUnits` | `metric` \| `imperial` | Display units only; scoring is always metric. Default `metric`. |
 | `language` | `auto` \| `en` \| `ru` | UI language. Default `auto` (from Home Assistant). |
 | `max_score` | number | Override the gauge maximum (integration mode). Leave empty for automatic. |
@@ -138,7 +135,9 @@ The package fetches forecasts with the modern `weather.get_forecasts` action (we
 
 The default thresholds are research-based averages, but migraine triggers are highly individual — one person reacts to a 4 hPa pressure drop, another only past 10. Since v3.1 every scoring threshold can be tuned to your own history, no YAML editing required.
 
-**With the sensor package installed (easiest):** go to **Settings → Devices & Services → Helpers** and search "Migraine Threshold". You'll find 20 sliders — the point steps for every factor (e.g. *Pressure 6h → 1 pt*, default 4 hPa). Change a value and both the server-side scoring **and the card** pick it up immediately: the card reads the same helpers automatically, so one calibration applies everywhere.
+**In the card editor (easiest):** open the card's visual editor and expand **Calibration — personal thresholds**. Each factor shows one box per point step; the placeholder is the value currently in effect (your `input_number` helper if you have one, otherwise the research default). Leave a box empty to keep using that value.
+
+**With the sensor package installed:** go to **Settings → Devices & Services → Helpers** and search "Migraine Threshold". You'll find 20 sliders — the point steps for every factor (e.g. *Pressure 6h → 1 pt*, default 4 hPa). Change a value and both the server-side scoring **and the card** pick it up immediately: the card reads the same helpers automatically, so one calibration applies everywhere.
 
 **Without the package:** create `input_number` helpers with the well-known IDs (`input_number.migraine_threshold_pressure_6h_1` … see the table below), or set thresholds directly in the card config:
 
@@ -169,6 +168,10 @@ Card config takes precedence over helpers; helpers take precedence over defaults
 Matching helper IDs: array keys get `_1`, `_2`, … suffixes (`migraine_threshold_uv_1`), scalar keys use the name as-is (`migraine_threshold_humidity_low`).
 
 **How to calibrate:** when a migraine hits, note the card's factor tiles (or the `sensor.migraine_risk_score` attributes). If attacks reliably arrive at pressure drops the card scores 0–1, lower the pressure steps; if UV never seems to matter for you, raise the UV steps so the factor stays quiet. Adjust one factor at a time and give each change a couple of weeks of history before the next tweak.
+
+### Multiple locations
+
+Each card instance keeps its own history cache and forecast subscription, so you can put several cards on one dashboard — one per home — each pointing at a different weather entity. Give each a `title:` to tell them apart. Threshold helpers are global (they describe *you*, not the house), but a per-card `thresholds:` block overrides them if a location really needs different values.
 
 ## How the Scoring Works
 
