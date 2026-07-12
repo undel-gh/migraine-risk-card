@@ -157,6 +157,209 @@ input_boolean:
     icon: mdi:medical-bag
 
 input_number:
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  # CALIBRATION: PERSONAL TRIGGER THRESHOLDS
+  # Migraine triggers are individual. Adjust these in Settings →
+  # Devices & Services → Helpers to match your own history — the
+  # scoring (and the card, in standalone mode) picks them up live.
+  # Defaults are the research-based values.
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  migraine_threshold_pressure_6h_1:
+    name: "Migraine Threshold: Pressure 6h → 1 pt"
+    min: 0.5
+    max: 30
+    step: 0.5
+    initial: 4
+    unit_of_measurement: "hPa"
+    mode: box
+    icon: mdi:gauge
+
+  migraine_threshold_pressure_6h_2:
+    name: "Migraine Threshold: Pressure 6h → 2 pts"
+    min: 0.5
+    max: 30
+    step: 0.5
+    initial: 6
+    unit_of_measurement: "hPa"
+    mode: box
+    icon: mdi:gauge
+
+  migraine_threshold_pressure_6h_3:
+    name: "Migraine Threshold: Pressure 6h → 3 pts"
+    min: 0.5
+    max: 30
+    step: 0.5
+    initial: 8
+    unit_of_measurement: "hPa"
+    mode: box
+    icon: mdi:gauge
+
+  migraine_threshold_pressure_6h_4:
+    name: "Migraine Threshold: Pressure 6h → 4 pts"
+    min: 0.5
+    max: 30
+    step: 0.5
+    initial: 10
+    unit_of_measurement: "hPa"
+    mode: box
+    icon: mdi:gauge
+
+  migraine_threshold_pressure_24h_1:
+    name: "Migraine Threshold: Pressure 24h → 1 pt"
+    min: 0.5
+    max: 40
+    step: 0.5
+    initial: 6
+    unit_of_measurement: "hPa"
+    mode: box
+    icon: mdi:hours-24
+
+  migraine_threshold_pressure_24h_2:
+    name: "Migraine Threshold: Pressure 24h → 2 pts"
+    min: 0.5
+    max: 40
+    step: 0.5
+    initial: 10
+    unit_of_measurement: "hPa"
+    mode: box
+    icon: mdi:hours-24
+
+  migraine_threshold_pressure_24h_3:
+    name: "Migraine Threshold: Pressure 24h → 3 pts"
+    min: 0.5
+    max: 40
+    step: 0.5
+    initial: 14
+    unit_of_measurement: "hPa"
+    mode: box
+    icon: mdi:hours-24
+
+  migraine_threshold_humidity_low:
+    name: "Migraine Threshold: Humidity low (dry, 1 pt)"
+    min: 0
+    max: 100
+    step: 1
+    initial: 30
+    unit_of_measurement: "%"
+    mode: box
+    icon: mdi:water-percent
+
+  migraine_threshold_humidity_high:
+    name: "Migraine Threshold: Humidity high (2 pts)"
+    min: 0
+    max: 100
+    step: 1
+    initial: 80
+    unit_of_measurement: "%"
+    mode: box
+    icon: mdi:water-percent
+
+  migraine_threshold_temp_hot:
+    name: "Migraine Threshold: Hot temperature (2 pts)"
+    min: 15
+    max: 50
+    step: 0.5
+    initial: 30
+    unit_of_measurement: "°C"
+    mode: box
+    icon: mdi:thermometer-high
+
+  migraine_threshold_temp_cold:
+    name: "Migraine Threshold: Cold temperature (2 pts)"
+    min: -40
+    max: 20
+    step: 0.5
+    initial: 5
+    unit_of_measurement: "°C"
+    mode: box
+    icon: mdi:thermometer-low
+
+  migraine_threshold_temp_change_1:
+    name: "Migraine Threshold: Temp change 6h → 1 pt"
+    min: 1
+    max: 25
+    step: 0.5
+    initial: 5
+    unit_of_measurement: "°C"
+    mode: box
+    icon: mdi:thermometer-chevron-up
+
+  migraine_threshold_temp_change_2:
+    name: "Migraine Threshold: Temp change 6h → 2 pts"
+    min: 1
+    max: 25
+    step: 0.5
+    initial: 8
+    unit_of_measurement: "°C"
+    mode: box
+    icon: mdi:thermometer-chevron-up
+
+  migraine_threshold_wind_1:
+    name: "Migraine Threshold: Wind → 1 pt"
+    min: 5
+    max: 150
+    step: 1
+    initial: 35
+    unit_of_measurement: "km/h"
+    mode: box
+    icon: mdi:weather-windy
+
+  migraine_threshold_wind_2:
+    name: "Migraine Threshold: Wind → 2 pts"
+    min: 5
+    max: 150
+    step: 1
+    initial: 50
+    unit_of_measurement: "km/h"
+    mode: box
+    icon: mdi:weather-windy
+
+  migraine_threshold_uv_1:
+    name: "Migraine Threshold: UV → 1 pt"
+    min: 1
+    max: 12
+    step: 0.5
+    initial: 6
+    mode: box
+    icon: mdi:sun-wireless
+
+  migraine_threshold_uv_2:
+    name: "Migraine Threshold: UV → 2 pts"
+    min: 1
+    max: 12
+    step: 0.5
+    initial: 8
+    mode: box
+    icon: mdi:sun-wireless
+
+  migraine_threshold_aqi_1:
+    name: "Migraine Threshold: AQI → 1 pt"
+    min: 10
+    max: 400
+    step: 5
+    initial: 50
+    mode: box
+    icon: mdi:air-filter
+
+  migraine_threshold_aqi_2:
+    name: "Migraine Threshold: AQI → 2 pts"
+    min: 10
+    max: 400
+    step: 5
+    initial: 100
+    mode: box
+    icon: mdi:air-filter
+
+  migraine_threshold_aqi_3:
+    name: "Migraine Threshold: AQI → 3 pts"
+    min: 10
+    max: 400
+    step: 5
+    initial: 150
+    mode: box
+    icon: mdi:air-filter
+
   pressure_6h_peak:
     name: "6h Pressure Peak"
     min: 900
@@ -491,9 +694,11 @@ template:
         unique_id: migraine_factor_humidity
         state: >
           {% set h = states('sensor.migraine_humidity') | float(0) %}
-          {% if h > 80 %}
+          {% set hi = states('input_number.migraine_threshold_humidity_high') | float(80) %}
+          {% set lo = states('input_number.migraine_threshold_humidity_low') | float(30) %}
+          {% if h > hi %}
             2
-          {% elif h < 30 %}
+          {% elif h < lo %}
             1
           {% else %}
             0
@@ -508,7 +713,9 @@ template:
             0
           {% else %}
             {% set t = raw | float(0) %}
-            {% if t > 30 or t < 5 %}
+            {% set hot = states('input_number.migraine_threshold_temp_hot') | float(30) %}
+            {% set cold = states('input_number.migraine_threshold_temp_cold') | float(5) %}
+            {% if t > hot or t < cold %}
               2
             {% else %}
               0
@@ -520,9 +727,11 @@ template:
         unique_id: migraine_factor_temperature_change
         state: >
           {% set delta = states('sensor.migraine_temperature_change_6h') | float(0) %}
-          {% if delta >= 8 %}
+          {% set t1 = states('input_number.migraine_threshold_temp_change_1') | float(5) %}
+          {% set t2 = states('input_number.migraine_threshold_temp_change_2') | float(8) %}
+          {% if delta >= t2 %}
             2
-          {% elif delta >= 5 %}
+          {% elif delta >= t1 %}
             1
           {% else %}
             0
@@ -537,9 +746,11 @@ template:
         unique_id: migraine_factor_wind
         state: >
           {% set w = states('sensor.migraine_wind_speed') | float(0) %}
-          {% if w >= 50 %}
+          {% set w1 = states('input_number.migraine_threshold_wind_1') | float(35) %}
+          {% set w2 = states('input_number.migraine_threshold_wind_2') | float(50) %}
+          {% if w >= w2 %}
             2
-          {% elif w >= 35 %}
+          {% elif w >= w1 %}
             1
           {% else %}
             0
@@ -550,9 +761,11 @@ template:
         unique_id: migraine_factor_uv_sun
         state: >
           {% set uv = states('sensor.migraine_uv_index') | float(0) %}
-          {% if uv >= 8 %}
+          {% set u1 = states('input_number.migraine_threshold_uv_1') | float(6) %}
+          {% set u2 = states('input_number.migraine_threshold_uv_2') | float(8) %}
+          {% if uv >= u2 %}
             2
-          {% elif uv >= 6 %}
+          {% elif uv >= u1 %}
             1
           {% else %}
             0
@@ -566,7 +779,10 @@ template:
           {% set pm25 = states('sensor.migraine_waqi_pm25') | float(0) %}
           {% set pm10 = states('sensor.migraine_waqi_pm10') | float(0) %}
           {% set o3 = states('sensor.migraine_waqi_o3') | float(0) %}
-          {% set base = 0 if aqi <= 50 else 1 if aqi <= 100 else 2 if aqi <= 150 else 3 %}
+          {% set a1 = states('input_number.migraine_threshold_aqi_1') | float(50) %}
+          {% set a2 = states('input_number.migraine_threshold_aqi_2') | float(100) %}
+          {% set a3 = states('input_number.migraine_threshold_aqi_3') | float(150) %}
+          {% set base = 0 if aqi <= a1 else 1 if aqi <= a2 else 2 if aqi <= a3 else 3 %}
           {% set nudge = 0 %}
           {% if pm25 >= 25 %}{% set nudge = nudge + 1 %}{% endif %}
           {% if pm10 >= 50 %}{% set nudge = nudge + 1 %}{% endif %}
@@ -603,17 +819,31 @@ template:
           {% set uvf = states('sensor.migraine_factor_uv_sun') | int(0) %}
           {% set thf = states('sensor.migraine_factor_thunderstorm_nearby') | int(0) %}
           {% set aqif = states('sensor.migraine_factor_air_quality') | int(0) %}
-          {% set d6_pts = 4 if d6 >= 10 else 3 if d6 >= 8 else 2 if d6 >= 6 else 1 if d6 >= 4 else 0 %}
-          {% set d24_pts = 3 if d24 >= 14 else 2 if d24 >= 10 else 1 if d24 >= 6 else 0 %}
+          {% set p1 = states('input_number.migraine_threshold_pressure_6h_1') | float(4) %}
+          {% set p2 = states('input_number.migraine_threshold_pressure_6h_2') | float(6) %}
+          {% set p3 = states('input_number.migraine_threshold_pressure_6h_3') | float(8) %}
+          {% set p4 = states('input_number.migraine_threshold_pressure_6h_4') | float(10) %}
+          {% set q1 = states('input_number.migraine_threshold_pressure_24h_1') | float(6) %}
+          {% set q2 = states('input_number.migraine_threshold_pressure_24h_2') | float(10) %}
+          {% set q3 = states('input_number.migraine_threshold_pressure_24h_3') | float(14) %}
+          {% set d6_pts = 4 if d6 >= p4 else 3 if d6 >= p3 else 2 if d6 >= p2 else 1 if d6 >= p1 else 0 %}
+          {% set d24_pts = 3 if d24 >= q3 else 2 if d24 >= q2 else 1 if d24 >= q1 else 0 %}
           {{ d6_pts + d24_pts + humf + tempf + temp_chg + windf + uvf + thf + aqif }}
         icon: mdi:head-alert-outline
         attributes:
           pressure_6h_points: >
             {% set d6 = states('sensor.migraine_pressure_drop_6h') | float(0) %}
-            {{ 4 if d6 >= 10 else 3 if d6 >= 8 else 2 if d6 >= 6 else 1 if d6 >= 4 else 0 }}
+            {% set p1 = states('input_number.migraine_threshold_pressure_6h_1') | float(4) %}
+            {% set p2 = states('input_number.migraine_threshold_pressure_6h_2') | float(6) %}
+            {% set p3 = states('input_number.migraine_threshold_pressure_6h_3') | float(8) %}
+            {% set p4 = states('input_number.migraine_threshold_pressure_6h_4') | float(10) %}
+            {{ 4 if d6 >= p4 else 3 if d6 >= p3 else 2 if d6 >= p2 else 1 if d6 >= p1 else 0 }}
           pressure_24h_points: >
             {% set d24 = states('sensor.migraine_pressure_drop_24h') | float(0) %}
-            {{ 3 if d24 >= 14 else 2 if d24 >= 10 else 1 if d24 >= 6 else 0 }}
+            {% set q1 = states('input_number.migraine_threshold_pressure_24h_1') | float(6) %}
+            {% set q2 = states('input_number.migraine_threshold_pressure_24h_2') | float(10) %}
+            {% set q3 = states('input_number.migraine_threshold_pressure_24h_3') | float(14) %}
+            {{ 3 if d24 >= q3 else 2 if d24 >= q2 else 1 if d24 >= q1 else 0 }}
           humidity_points: "{{ states('sensor.migraine_factor_humidity') | int(0) }}"
           temperature_points: "{{ states('sensor.migraine_factor_temperature') | int(0) }}"
           temperature_change_points: "{{ states('sensor.migraine_factor_temperature_change') | int(0) }}"
@@ -687,9 +917,12 @@ template:
           {# ── Temperature extremes (skip if no data instead of assuming 0°) ── #}
           {% set temp_pts = 0 %}
           {% if tmax is not none and tmin is not none %}
-            {% set temp_pts = 2 if (tmax > 30 or tmin < 5) else 1 if (tmax > 28 or tmin < 8) else 0 %}
+            {% set hot = states('input_number.migraine_threshold_temp_hot') | float(30) %}
+            {% set cold = states('input_number.migraine_threshold_temp_cold') | float(5) %}
+            {% set temp_pts = 2 if (tmax > hot or tmin < cold) else 1 if (tmax > hot - 2 or tmin < cold + 3) else 0 %}
           {% elif tmax is not none %}
-            {% set temp_pts = 2 if tmax > 30 else 1 if tmax > 28 else 0 %}
+            {% set hot = states('input_number.migraine_threshold_temp_hot') | float(30) %}
+            {% set temp_pts = 2 if tmax > hot else 1 if tmax > hot - 2 else 0 %}
           {% endif %}
           {# ── Temperature swing (range as proxy for change) ── #}
           {% set swing_pts = 0 %}
@@ -700,14 +933,18 @@ template:
           {# ── UV ── #}
           {% set uv_pts = 0 %}
           {% if uv is not none %}
-            {% set uv_pts = 2 if uv >= 8 else 1 if uv >= 6 else 0 %}
+            {% set u1 = states('input_number.migraine_threshold_uv_1') | float(6) %}
+            {% set u2 = states('input_number.migraine_threshold_uv_2') | float(8) %}
+            {% set uv_pts = 2 if uv >= u2 else 1 if uv >= u1 else 0 %}
           {% endif %}
           {# ── Wind: numeric from forecast, else RU/EN keywords in text ── #}
           {% set fc_text = states(fc_entity) | lower if fc_entity not in ['not_configured','unknown','unavailable','',none] else '' %}
           {% set wind_pts = 0 %}
           {% if fd_wind is not none and fd_wind | float(none) is not none %}
             {% set w = fd_wind | float(0) %}
-            {% set wind_pts = 2 if w >= 50 else 1 if w >= 35 else 0 %}
+            {% set w1 = states('input_number.migraine_threshold_wind_1') | float(35) %}
+            {% set w2 = states('input_number.migraine_threshold_wind_2') | float(50) %}
+            {% set wind_pts = 2 if w >= w2 else 1 if w >= w1 else 0 %}
           {% elif fc_text %}
             {% set severe_kw = ['damaging winds', 'destructive winds', 'strong winds',
                                 'ураган', 'штормовой ветер', 'очень сильный ветер', 'разрушительн'] %}
@@ -973,7 +1210,8 @@ template:
         state: >
           {% set drop_6h = states('sensor.migraine_pressure_drop_6h') | float(0) %}
           {% set drop_24h = states('sensor.migraine_pressure_drop_24h') | float(0) %}
-          {{ drop_6h >= 4 or drop_24h >= 4 }}
+          {{ drop_6h >= states('input_number.migraine_threshold_pressure_6h_1') | float(4)
+             or drop_24h >= states('input_number.migraine_threshold_pressure_24h_1') | float(6) }}
         icon: >
           {% if is_state(this.entity_id,'on') %}mdi:trending-down{% else %}mdi:trending-neutral{% endif %}
         attributes:
