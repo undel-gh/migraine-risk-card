@@ -1,5 +1,5 @@
 /**
- * Migraine Risk Card 
+ * Migraine Risk Card
  * Home Assistant Custom Lovelace Card
  *
  * Works two ways:
