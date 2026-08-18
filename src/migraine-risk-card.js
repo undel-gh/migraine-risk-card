@@ -1,5 +1,5 @@
 /**
- * Migraine Risk Card v2.1.0
+ * Migraine Risk Card
  * Home Assistant Custom Lovelace Card
  *
  * Works two ways:
@@ -15,7 +15,7 @@
  * © 2026 — MIT Licence
  */
 
-const CARD_VERSION = '3.2.0';
+const CARD_VERSION = '3.2.1';
 
 /* ─── Calibration (personal threshold overrides) ─────────────────────
  * Priority: card config `thresholds:` → input_number helpers → defaults.
