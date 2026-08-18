@@ -233,7 +233,7 @@ Nine factors, each scored on a 0–2 or 0–4 scale:
 
 **A factor shows `?`.** The configured entity ID doesn't exist — check for a typo or a renamed entity.
 
-** Translations folder not being downloaded during update from 3.1.1 to 3.2.1.** 
+**Translations folder not being downloaded during update from 3.1.1 to 3.2.1.** 
 
 Reinstall the card:
 
