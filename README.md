@@ -259,6 +259,8 @@ The card aggregates these into a single actionable score so you can act before s
 
 The card source is [`src/migraine-risk-card.js`](src/migraine-risk-card.js); [`dist/`](dist/) is the shipped copy (no bundler — a straight copy of `src/`). To release: edit `src/`, bump `CARD_VERSION`, copy to `dist/`, commit, and tag. CI (`.github/workflows/validate.yml`) runs HACS validation and checks that `dist/` matches `src/`; `release.yml` attaches the card and sensor package to each published release.
 
+Feel free to submit PR with translations. Just pick en.json, translate it and send PR with new language.
+
 > Keep `CARD_VERSION` in step with the release tag — the console banner and the HACS version should agree.
 
 ## Licence
