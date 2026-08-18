@@ -233,6 +233,16 @@ Nine factors, each scored on a 0–2 or 0–4 scale:
 
 **A factor shows `?`.** The configured entity ID doesn't exist — check for a typo or a renamed entity.
 
+** Translations folder not being downloaded during update from 3.1.1 to 3.2.1.** 
+
+Reinstall the card:
+
+1. Go to HACS, delete the card.
+2. Delete custom repository.
+3. Refresh HACS.
+4. Add custom repository.
+5. Install latest build of the card.
+
 ## Scientific Background
 
 Several environmental factors are associated with migraine onset:
@@ -252,12 +262,6 @@ The card aggregates these into a single actionable score so you can act before s
 The card source is [`src/migraine-risk-card.js`](src/migraine-risk-card.js); [`dist/`](dist/) is the shipped copy (no bundler — a straight copy of `src/`). To release: edit `src/`, bump `CARD_VERSION`, copy to `dist/`, commit, and tag. CI (`.github/workflows/validate.yml`) runs HACS validation and checks that `dist/` matches `src/`; `release.yml` attaches the card and sensor package to each published release.
 
 > Keep `CARD_VERSION` in step with the release tag — the console banner and the HACS version should agree.
-
-## Support
-
-If you find this card useful, consider buying me a coffee:
-
-[![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-Support-yellow?style=for-the-badge&logo=buy-me-a-coffee)](https://buymeacoffee.com/emma_j)
 
 ## Licence
 
