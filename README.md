@@ -233,15 +233,12 @@ Nine factors, each scored on a 0–2 or 0–4 scale:
 
 **A factor shows `?`.** The configured entity ID doesn't exist — check for a typo or a renamed entity.
 
-**Translations folder not being downloaded during update from 3.1.1 to 3.2.1.** 
-
-Reinstall the card:
-
-1. Go to HACS, delete the card.
-2. Delete custom repository.
-3. Refresh HACS.
-4. Add custom repository.
-5. Install latest build of the card.
+**Translations folder not being downloaded during update from 3.1.1 to 3.2.1.** Reinstall the card.
+- Go to HACS, delete the card.
+- Delete custom repository.
+- Refresh HACS.
+- Add custom repository.
+- Install latest build of the card.
 
 ## Scientific Background
 
