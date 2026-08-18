@@ -94,6 +94,7 @@ Every factor is optional. Omit a line and that tile disappears and the gauge max
 | `title` | string | Optional heading shown on the card — handy when you run one card per location. |
 | `displayUnits` | `metric` \| `imperial` | Display units only; scoring is always metric. Default `metric`. |
 | `language` | `auto` \| `en` \| `ru` | UI language. Default `auto` (from Home Assistant). |
+| `theme` | `auto` \| `dark' \| `light` | UI theme. Default `auto` (from Home Assistant). |
 | `translations_path` | string | Override where translation files are served from (only needed for non-standard installs). |
 | `max_score` | number | Override the gauge maximum (integration mode). Leave empty for automatic. |
 | `thresholds` | object | Personal trigger thresholds — see [Calibration](#calibrating-to-your-personal-triggers). |
