@@ -15,7 +15,7 @@
  * © 2026 — MIT Licence
  */
 
-const CARD_VERSION = '3.2.1';
+const CARD_VERSION = '3.3.1';
 
 /* ─── Calibration (personal threshold overrides) ─────────────────────
  * Priority: card config `thresholds:` → input_number helpers → defaults.
@@ -197,6 +197,10 @@ const I18N = {
       max_score: 'Gauge maximum (integration mode)',
       max_score_hint: 'Leave empty for automatic.',
       title: 'Card title',
+      theme: 'Theme',
+      theme_auto: 'Auto (follow Home Assistant)',
+      theme_dark: 'Dark',
+      theme_light: 'Light',
       title_hint: 'Optional — useful when showing several locations.',
       calibration: 'Calibration — personal thresholds',
       calibration_hint: 'Migraine triggers are individual. Leave a field empty to use the input_number helper (if present) or the research default shown as the placeholder.',
@@ -260,6 +264,19 @@ function loadTranslation(lang, config, onLoad) {
 function dictFor(lang) {
   const d = LOADED_TRANSLATIONS[lang];
   return (d && d !== 'loading' && d !== 'failed') ? d : null;
+}
+
+/* theme: 'auto' (default) follows Home Assistant's dark mode, falling back to
+ * the OS preference; 'dark'/'light' pin the card regardless of the HA theme. */
+function resolveTheme(hass, config) {
+  const pref = (config && config.theme) || 'auto';
+  if (pref === 'dark' || pref === 'light') return pref;
+  const haDark = hass && hass.themes && hass.themes.darkMode;
+  if (typeof haDark === 'boolean') return haDark ? 'dark' : 'light';
+  const mq = typeof window !== 'undefined' && window.matchMedia
+    ? window.matchMedia('(prefers-color-scheme: light)')
+    : null;
+  return mq && mq.matches ? 'light' : 'dark';
 }
 
 function resolveLang(hass, config) {
@@ -548,6 +565,27 @@ function riskColour(level) {
   return RISK_COLOURS[level] || '#4ade80';
 }
 
+/* On a white background the vivid palette is too pale for small text, so
+ * text and icons switch to darker, WCAG-friendlier shades. Thick graphics
+ * (the gauge arc, the tile's left border) keep the vivid colours. */
+const RISK_COLOURS_ON_LIGHT = {
+  'Low':       '#15803d',
+  'Moderate':  '#a16207',
+  'High':      '#c2410c',
+  'Very High': '#b91c1c',
+};
+const POINT_COLOURS_ON_LIGHT = ['#15803d', '#a16207', '#c2410c', '#b91c1c'];
+
+function pointTextColour(pts, theme) {
+  if (theme !== 'light') return pointColour(pts);
+  return POINT_COLOURS_ON_LIGHT[Math.min(Math.max(pts, 0), 3)];
+}
+
+function riskTextColour(level, theme) {
+  if (theme !== 'light') return riskColour(level);
+  return RISK_COLOURS_ON_LIGHT[level] || RISK_COLOURS_ON_LIGHT.Low;
+}
+
 function parseNum(val) {
   if (val == null || val === 'unavailable' || val === 'unknown') return null;
   const n = parseFloat(val);
@@ -591,17 +629,46 @@ const CARD_STYLES = `
     display: block;
     --risk-color: #4ade80;
     --forecast-color: #4ade80;
+
+    /* Dark palette (default). The light variant below only overrides these. */
+    --mrc-bg: #1a1d23;
+    --mrc-tile: #22252c;
+    --mrc-forecast-from: #1e2128;
+    --mrc-forecast-to: #22252c;
+    --mrc-track: #2a2d35;
+    --mrc-text: #e0e0e0;
+    --mrc-score: #fff;
+    --mrc-dim: #666;
+    --mrc-mute: #555;
+    --mrc-faint: #444;
+    --mrc-shadow: 0 8px 32px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.04);
+    --mrc-tile-shadow: none;
+  }
+
+  :host([data-theme="light"]) {
+    --mrc-bg: #ffffff;
+    --mrc-tile: #f4f6fa;
+    --mrc-forecast-from: #f7f9fc;
+    --mrc-forecast-to: #eef1f7;
+    --mrc-track: #e3e7ee;
+    --mrc-text: #1f2430;
+    --mrc-score: #111827;
+    --mrc-dim: #6b7280;
+    --mrc-mute: #8b93a1;
+    --mrc-faint: #a6adba;
+    --mrc-shadow: 0 4px 20px rgba(17,24,39,0.10), 0 0 0 1px rgba(17,24,39,0.06);
+    --mrc-tile-shadow: 0 1px 2px rgba(17,24,39,0.04);
   }
 
   .card {
-    background: #1a1d23;
+    background: var(--mrc-bg);
     border-radius: 20px;
     padding: 28px 24px 20px;
-    box-shadow: 0 8px 32px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.04);
+    box-shadow: var(--mrc-shadow);
     position: relative;
     overflow: hidden;
     font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-    color: #e0e0e0;
+    color: var(--mrc-text);
   }
 
   .card::before {
@@ -629,7 +696,7 @@ const CARD_STYLES = `
 
   .gauge-track {
     fill: none;
-    stroke: #2a2d35;
+    stroke: var(--mrc-track);
     stroke-width: 14;
     stroke-linecap: round;
   }
@@ -648,7 +715,7 @@ const CARD_STYLES = `
     font-family: 'Space Mono', 'Courier New', monospace;
     font-size: 42px;
     font-weight: 700;
-    fill: #fff;
+    fill: var(--mrc-score);
     text-anchor: middle;
     dominant-baseline: auto;
   }
@@ -656,7 +723,7 @@ const CARD_STYLES = `
   .gauge-max {
     font-family: 'DM Sans', sans-serif;
     font-size: 13px;
-    fill: #555;
+    fill: var(--mrc-mute);
     text-anchor: middle;
   }
 
@@ -665,7 +732,7 @@ const CARD_STYLES = `
     font-weight: 700;
     letter-spacing: 2px;
     text-transform: uppercase;
-    color: var(--risk-color);
+    color: var(--risk-text, var(--risk-color));
     text-align: center;
     margin-top: 2px;
   }
@@ -675,7 +742,7 @@ const CARD_STYLES = `
     font-size: 16px;
     font-weight: 600;
     letter-spacing: 0.5px;
-    color: var(--primary-text-color, #e5e7eb);
+    color: var(--mrc-text);
     text-align: center;
     margin-bottom: 4px;
   }
@@ -685,7 +752,7 @@ const CARD_STYLES = `
     font-size: 9px;
     letter-spacing: 2px;
     text-transform: uppercase;
-    color: #444;
+    color: var(--mrc-faint);
     margin: 18px 0 10px;
   }
 
@@ -700,7 +767,8 @@ const CARD_STYLES = `
     align-items: center;
     gap: 8px;
     padding: 8px 10px;
-    background: #22252c;
+    background: var(--mrc-tile);
+    box-shadow: var(--mrc-tile-shadow);
     border-radius: 10px;
     border-left: 3px solid var(--f-color, #4ade80);
     opacity: 0;
@@ -725,7 +793,7 @@ const CARD_STYLES = `
   .factor-icon {
     flex-shrink: 0;
     --mdc-icon-size: 18px;
-    color: var(--f-color);
+    color: var(--f-text, var(--f-color));
   }
   .factor-icon ha-icon {
     display: block;
@@ -741,7 +809,7 @@ const CARD_STYLES = `
 
   .factor-name {
     font-size: 9px;
-    color: #666;
+    color: var(--mrc-dim);
     text-transform: uppercase;
     letter-spacing: 0.5px;
     white-space: nowrap;
@@ -753,14 +821,14 @@ const CARD_STYLES = `
     font-family: 'Space Mono', 'Courier New', monospace;
     font-size: 12px;
     font-weight: 700;
-    color: var(--f-color);
+    color: var(--f-text, var(--f-color));
   }
 
   /* ── Forecast ── */
   .forecast {
     margin-top: 14px;
     padding: 10px 14px;
-    background: linear-gradient(135deg, #1e2128, #22252c);
+    background: linear-gradient(135deg, var(--mrc-forecast-from), var(--mrc-forecast-to));
     border-radius: 12px;
     display: flex;
     align-items: center;
@@ -773,7 +841,7 @@ const CARD_STYLES = `
   .forecast-icon {
     flex-shrink: 0;
     --mdc-icon-size: 24px;
-    color: var(--forecast-color);
+    color: var(--forecast-text, var(--forecast-color));
   }
   .forecast-icon ha-icon {
     display: block;
@@ -785,7 +853,7 @@ const CARD_STYLES = `
 
   .forecast-title {
     font-size: 10px;
-    color: #555;
+    color: var(--mrc-mute);
     text-transform: uppercase;
     letter-spacing: 1px;
   }
@@ -794,12 +862,12 @@ const CARD_STYLES = `
     font-family: 'Space Mono', 'Courier New', monospace;
     font-size: 13px;
     font-weight: 700;
-    color: var(--forecast-color);
+    color: var(--forecast-text, var(--forecast-color));
   }
 
   .forecast-meta {
     font-size: 11px;
-    color: #666;
+    color: var(--mrc-dim);
     margin-top: 1px;
   }
 
@@ -807,7 +875,7 @@ const CARD_STYLES = `
     font-family: 'Space Mono', 'Courier New', monospace;
     font-size: 18px;
     font-weight: 700;
-    color: var(--forecast-color);
+    color: var(--forecast-text, var(--forecast-color));
     flex-shrink: 0;
   }
 
@@ -824,7 +892,7 @@ const CARD_STYLES = `
   .empty-msg {
     text-align: center;
     padding: 20px;
-    color: #555;
+    color: var(--mrc-mute);
     font-size: 12px;
   }
 `;
@@ -938,7 +1006,7 @@ class MigraineRiskCard extends HTMLElement {
     const h = this._hass;
     if (!h || !this._config) return '';
     const c = this._config;
-    let s = '';
+    let s = resolveTheme(h, c) + '|';
     if (c.entity_risk_score) {
       const e = h.states[c.entity_risk_score];
       s += (e?.state || '') + '|';
@@ -1180,6 +1248,8 @@ class MigraineRiskCard extends HTMLElement {
     const el = this._els;
     const active = this._activeFactors();
     if (el.title) el.title.textContent = c.title || '';
+    const theme = resolveTheme(h, c);
+    this.setAttribute('data-theme', theme);
 
     const lang = this._lang || resolveLang(h, c);
     this._lang = lang;
@@ -1195,7 +1265,8 @@ class MigraineRiskCard extends HTMLElement {
       el.gaugeScore.textContent = '—';
       el.gaugeMax.textContent = '';
       el.riskLabel.textContent = tr(lang, 'no_data');
-      el.card.style.setProperty('--risk-color', '#555');
+      el.card.style.setProperty('--risk-color', theme === 'light' ? '#9aa3b2' : '#555');
+      el.card.style.setProperty('--risk-text', theme === 'light' ? '#6b7280' : '#555');
       el.gaugeFill.setAttribute('stroke-dashoffset', '251.33');
       return;
     }
@@ -1254,6 +1325,7 @@ class MigraineRiskCard extends HTMLElement {
 
     const colour = riskColour(level);
     el.card.style.setProperty('--risk-color', colour);
+    el.card.style.setProperty('--risk-text', riskTextColour(level, theme));
 
     // Gauge
     const pct = Math.min(totalScore / maxScore, 1);
@@ -1289,10 +1361,12 @@ class MigraineRiskCard extends HTMLElement {
       });
     }
 
+    const tileTheme = resolveTheme(this._hass, this._config);
     factorData.forEach(({ key, pts, entity, def }, i) => {
       const tile = grid.children[i];
       const colour = pointColour(pts);
       tile.style.setProperty('--f-color', colour);
+      tile.style.setProperty('--f-text', pointTextColour(pts, tileTheme));
 
       const iconEl = tile.querySelector('.factor-icon');
       if (!iconEl.querySelector('ha-icon')) {
@@ -1377,6 +1451,7 @@ class MigraineRiskCard extends HTMLElement {
     const fLevel = attrs.risk_level || 'Low';
     const fColour = riskColour(fLevel);
     card.style.setProperty('--forecast-color', fColour);
+    card.style.setProperty('--forecast-text', riskTextColour(fLevel, resolveTheme(this._hass, this._config)));
 
     const fIconEl = bar.querySelector('.forecast-icon');
     const RISK_ICONS = {
@@ -1444,7 +1519,9 @@ class MigraineRiskCard extends HTMLElement {
     const pts = scoreTomorrow(data, a.wind_speed_unit, resolveThresholds(this._hass, this._config));
     const level = tomorrowLevel(pts);
     const colour = riskColour(level);
-    bar.closest('.card').style.setProperty('--forecast-color', colour);
+    const fCard = bar.closest('.card');
+    fCard.style.setProperty('--forecast-color', colour);
+    fCard.style.setProperty('--forecast-text', riskTextColour(level, resolveTheme(this._hass, this._config)));
 
     const iconName = WEATHER_ICONS[data.condition] || 'mdi:weather-partly-cloudy';
     const fIconEl = bar.querySelector('.forecast-icon');
@@ -1699,6 +1776,21 @@ class MigraineRiskCardEditor extends HTMLElement {
       (val) => {
         if (val === 'metric') delete this._config.displayUnits;
         else this._config.displayUnits = val;
+      }
+    ));
+
+    // Theme select
+    section.appendChild(this._selectField(
+      this._t('editor.theme'),
+      [
+        { value: 'auto',  text: this._t('editor.theme_auto') },
+        { value: 'dark',  text: this._t('editor.theme_dark') },
+        { value: 'light', text: this._t('editor.theme_light') },
+      ],
+      this._config.theme || 'auto',
+      (val) => {
+        if (val === 'auto') delete this._config.theme;
+        else this._config.theme = val;
       }
     ));
 
