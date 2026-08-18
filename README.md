@@ -1,9 +1,5 @@
 # Migraine Risk Card for Home Assistant
 
-[![hacs_badge](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/hacs/integration)
-![GitHub release](https://img.shields.io/github/v/release/undel-gh/Redmond-oven-card)
-![License](https://img.shields.io/github/license/undel-gh/Redmond-oven-card)
-
 A science-backed environmental migraine risk monitoring card for Home Assistant. It tracks up to 9 weather and air-quality factors known to trigger migraines and shows a composite risk score on a visual gauge — plus tomorrow's outlook.
 
 ![Migraine Risk Card](https://raw.githubusercontent.com/undel-gh/migraine-risk-card/main/docs/card-preview.png)
@@ -38,7 +34,7 @@ The result: everything updates through HACS with one click. The sensor package i
 - **Works with any weather integration** — Met.no, OpenWeatherMap, Gismeteo, Yandex, BOM, or any provider that creates a `weather.*` entity
 - **Optional air quality** — connect a WAQI/OpenAQ/any AQI sensor for the pollution factor
 - **Show only what you configure** — unconfigured factors simply don't appear, and the gauge maximum adjusts to match
-- **English & Russian UI**, auto-detected
+- **English & Russian UI**, auto-detected — [add your language](#adding-a-language) with a single JSON file
 - **Dark-theme design** with colour-coded tiles and a semicircular gauge
 
 ## Installation
@@ -52,7 +48,7 @@ The result: everything updates through HACS with one click. The sensor package i
 
 > Modern HACS registers the dashboard resource for you — you do **not** need to add a resource manually under *Settings → Dashboards → Resources*. Adding one by hand creates a **second, un-cache-busted copy** of the card, which loads an old version alongside the new one. If your card ever looks out of date or the language selector vanishes, check for a duplicate resource — see [Troubleshooting](#troubleshooting).
 
-After downloading, hard-refresh your browser (**Ctrl+F5**). Open the browser console (F12) and you should see a single banner: `🧠 Migraine Risk Card v3.1.1`.
+After downloading, hard-refresh your browser (**Ctrl+F5**). Open the browser console (F12) and you should see a single banner: `🧠 Migraine Risk Card v3.2.0`.
 
 ### Step 2 — Add the card to a dashboard
 
@@ -98,6 +94,7 @@ Every factor is optional. Omit a line and that tile disappears and the gauge max
 | `title` | string | Optional heading shown on the card — handy when you run one card per location. |
 | `displayUnits` | `metric` \| `imperial` | Display units only; scoring is always metric. Default `metric`. |
 | `language` | `auto` \| `en` \| `ru` | UI language. Default `auto` (from Home Assistant). |
+| `translations_path` | string | Override where translation files are served from (only needed for non-standard installs). |
 | `max_score` | number | Override the gauge maximum (integration mode). Leave empty for automatic. |
 | `thresholds` | object | Personal trigger thresholds — see [Calibration](#calibrating-to-your-personal-triggers). |
 
@@ -134,6 +131,33 @@ The bundled `sensor-package/migraine_sensors.yaml` reproduces the scoring **serv
    ```
 
 The package fetches forecasts with the modern `weather.get_forecasts` action (weather entities no longer expose a `forecast` attribute) and detects thunderstorms from both the forecast and warning/forecast text — English and Russian keywords are recognised.
+
+## Translations
+
+The UI ships in English and Russian. The language follows your Home Assistant setting automatically; override it per card with `language:` in the config or the **Language** selector in the editor.
+
+Translations live in plain JSON files next to the card:
+
+```
+dist/
+├── migraine-risk-card.js
+└── translations/
+    ├── en.json
+    └── ru.json
+```
+
+English is also embedded in the card as a guaranteed fallback, so a missing or failed translation file never leaves the UI blank — untranslated keys quietly fall back to English.
+
+### Adding a language
+
+No JavaScript knowledge required for the translation itself:
+
+1. Copy `dist/translations/en.json` to `dist/translations/<code>.json` (ISO 639-1, e.g. `de.json`).
+2. Translate the values — keep every key exactly as it is.
+3. Add the code to `AVAILABLE_LANGS` near the top of `src/migraine-risk-card.js` (and copy `src/` to `dist/`).
+4. Open a PR. CI checks that your file covers every key in `en.json` and that `AVAILABLE_LANGS` matches the shipped files.
+
+> **Packaging note:** because the card ships more than one file, `hacs.json` deliberately has **no** `filename` key — that makes HACS download the whole `dist/` directory, translations included. Keep every shipped asset inside `dist/`.
 
 ## Calibrating to Your Personal Triggers
 

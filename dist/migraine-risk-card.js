@@ -15,7 +15,7 @@
  * © 2026 — MIT Licence
  */
 
-const CARD_VERSION = '3.1.1';
+const CARD_VERSION = '3.2.0';
 
 /* ─── Calibration (personal threshold overrides) ─────────────────────
  * Priority: card config `thresholds:` → input_number helpers → defaults.
@@ -214,76 +214,65 @@ const I18N = {
         aqi: 'Air quality (AQI)',
       },
     },
-  },
-  ru: {
-    factors_header: 'Факторы риска',
-    empty: 'Выберите сенсоры в редакторе карточки, чтобы начать.',
-    no_data: 'НЕТ ДАННЫХ',
-    forecast_title: 'Прогноз на завтра',
-    pts: 'балл.',
-    rain: 'Дождь',
-    level: { 'Low': 'Низкий', 'Moderate': 'Умеренный', 'High': 'Высокий', 'Very High': 'Очень высокий' },
-    storm: { '0': 'Ясно', '1': 'Возможна', '2': 'Гроза' },
-    factor: {
-      pressure_6h:        { name: 'Давление 6ч',  label: 'Изменение давления (6ч)' },
-      pressure_24h:       { name: 'Давление 24ч', label: 'Изменение давления (24ч)' },
-      humidity:           { name: 'Влажность',    label: 'Влажность' },
-      temperature:        { name: 'Температура',  label: 'Текущая температура' },
-      temperature_change: { name: 'Изм. темп.',   label: 'Изменение температуры (6ч)' },
-      wind:               { name: 'Ветер',        label: 'Скорость ветра' },
-      uv:                 { name: 'УФ',           label: 'УФ-индекс' },
-      thunderstorm:       { name: 'Гроза',        label: 'Гроза / молнии' },
-      air_quality:        { name: 'AQI',          label: 'Качество воздуха (AQI)' },
-    },
-    editor: {
-      integration: 'Интеграция (необязательно)',
-      integration_hint: 'Необязательно: готовые баллы из пакета сенсоров. В «Сущность прогноза» можно указать и weather-сущность — карточка сама рассчитает завтра.',
-      risk_score: 'Сущность балла риска',
-      risk_level: 'Сущность уровня риска',
-      forecast: 'Сущность прогноза',
-      weather: 'Погодные сенсоры',
-      weather_hint: 'Подходят и сенсоры, и weather-сущность. Из weather-сущности карточка читает атрибуты, сама считает изменения давления/температуры по истории и грозу по прогнозу — пакет сенсоров не требуется.',
-      display: 'Отображение',
-      display_hint: 'Внутренний расчёт всегда в метрической системе; меняется только отображение.',
-      units: 'Единицы отображения',
-      metric: 'Метрические (°C, км/ч, гПа)',
-      imperial: 'Имперские (°F, mph, inHg)',
-      language: 'Язык',
-      lang_auto: 'Авто (из Home Assistant)',
-      max_score: 'Максимум шкалы (режим интеграции)',
-      max_score_hint: 'Оставьте пустым для автоматического расчёта.',
-      title: 'Заголовок карточки',
-      title_hint: 'Необязательно — удобно, когда карточек несколько (например, разные дома).',
-      calibration: 'Калибровка — личные пороги',
-      calibration_hint: 'Триггеры мигрени индивидуальны. Пустое поле означает: взять значение из хелпера input_number (если он есть) или научный дефолт, показанный в подсказке.',
-      pts_step: 'балл.',
-      th: {
-        pressure_6h: 'Изменение давления 6ч (гПа)',
-        pressure_24h: 'Изменение давления 24ч (гПа)',
-        humidity_low: 'Влажность — сухо, 1 балл (%)',
-        humidity_high: 'Влажность — влажно, 2 балла (%)',
-        temp_hot: 'Жара, 2 балла (°C)',
-        temp_cold: 'Холод, 2 балла (°C)',
-        temp_change: 'Изменение температуры 6ч (°C)',
-        wind: 'Скорость ветра (км/ч)',
-        uv: 'УФ-индекс',
-        aqi: 'Качество воздуха (AQI)',
-      },
-    },
-  },
+  }
 };
+
+/* Built-in English acts as the guaranteed fallback; every other language
+ * (and any English overrides) load from translations/<lang>.json shipped
+ * alongside the card, so contributors can add a language with a PR that
+ * touches no JavaScript. */
+const AVAILABLE_LANGS = ['en', 'ru'];
+
+const TRANSLATION_PATHS = [
+  '/hacsfiles/migraine-risk-card/translations/',
+  '/local/community/migraine-risk-card/translations/',
+];
+
+// lang → dictionary | 'loading' | 'failed'
+const LOADED_TRANSLATIONS = {};
+
+function translationBases(config) {
+  const custom = config && config.translations_path;
+  return custom ? [custom.replace(/\/?$/, '/')] : TRANSLATION_PATHS;
+}
+
+// Fetches a language file once; calls onLoad when it becomes available.
+function loadTranslation(lang, config, onLoad) {
+  if (!lang || LOADED_TRANSLATIONS[lang]) return;
+  LOADED_TRANSLATIONS[lang] = 'loading';
+  const bases = translationBases(config);
+  const attempt = (i) => {
+    if (i >= bases.length) {
+      LOADED_TRANSLATIONS[lang] = 'failed';
+      return;
+    }
+    fetch(bases[i] + lang + '.json', { cache: 'no-cache' })
+      .then(r => (r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status))))
+      .then(dict => {
+        LOADED_TRANSLATIONS[lang] = dict;
+        if (onLoad) onLoad();
+      })
+      .catch(() => attempt(i + 1));
+  };
+  attempt(0);
+}
+
+function dictFor(lang) {
+  const d = LOADED_TRANSLATIONS[lang];
+  return (d && d !== 'loading' && d !== 'failed') ? d : null;
+}
 
 function resolveLang(hass, config) {
   const forced = config?.language;
-  if (forced && I18N[forced]) return forced;
+  if (forced && AVAILABLE_LANGS.includes(forced)) return forced;
   const haLang = (hass?.locale?.language || hass?.language || 'en').split('-')[0];
-  return I18N[haLang] ? haLang : 'en';
+  return AVAILABLE_LANGS.includes(haLang) ? haLang : 'en';
 }
 
 function tr(lang, path, fallback) {
-  const walk = (dict) => path.split('.').reduce((cur, p) => (cur == null ? cur : cur[p]), dict);
-  let v = walk(I18N[lang]);
-  if (v == null && lang !== 'en') v = walk(I18N.en);
+  const walk = (dict) => (dict == null ? null : path.split('.').reduce((cur, p) => (cur == null ? cur : cur[p]), dict));
+  let v = walk(dictFor(lang));
+  if (v == null) v = walk(I18N.en);        // built-in fallback
   return v != null ? v : (fallback != null ? fallback : path);
 }
 
@@ -913,6 +902,7 @@ class MigraineRiskCard extends HTMLElement {
     this._config = { ...config };
     if (this._hass) {
       this._lang = resolveLang(this._hass, this._config);
+      loadTranslation(this._lang, this._config, () => { this._prevHash = ''; this._update(); });
       this._prevHash = '';
       this._built = false;
       this._update();
@@ -923,6 +913,7 @@ class MigraineRiskCard extends HTMLElement {
     this._hass = hass;
     if (!this._config) return;
     this._lang = resolveLang(hass, this._config);
+    loadTranslation(this._lang, this._config, () => { this._prevHash = ''; this._update(); });
     const hash = this._stateHash();
     if (hash !== this._prevHash) {
       this._prevHash = hash;
@@ -1512,7 +1503,9 @@ class MigraineRiskCardEditor extends HTMLElement {
   }
 
   _t(path, fallback) {
-    return tr(resolveLang(this._hass, this._config), path, fallback);
+    const lang = resolveLang(this._hass, this._config);
+    loadTranslation(lang, this._config, () => { if (this._rendered) this._render(); });
+    return tr(lang, path, fallback);
   }
 
   _render() {
@@ -1711,7 +1704,7 @@ class MigraineRiskCardEditor extends HTMLElement {
 
     // Language select
     const langOptions = [{ value: 'auto', text: this._t('editor.lang_auto') }]
-      .concat(Object.keys(I18N).map(code => ({ value: code, text: code.toUpperCase() })));
+      .concat(AVAILABLE_LANGS.map(code => ({ value: code, text: code.toUpperCase() })));
     section.appendChild(this._selectField(
       this._t('editor.language'),
       langOptions,
