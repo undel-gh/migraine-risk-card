@@ -2,6 +2,8 @@
   "factors_header": "Contributing Factors",
   "empty": "Configure entity sensors in the card editor to get started.",
   "no_data": "NO DATA",
+  "no_forecast": "Forecast unavailable",
+  "forecast_loading": "Loading forecast…",
   "forecast_title": "Tomorrow's Forecast",
   "pts": "pts",
   "rain": "Rain",
