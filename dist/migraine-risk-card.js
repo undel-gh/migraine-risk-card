@@ -1,5 +1,5 @@
 /**
- * Migraine Risk Card
+ * Migraine Risk Card v2.1.0
  * Home Assistant Custom Lovelace Card
  *
  * Works two ways:
@@ -15,7 +15,7 @@
  * © 2026 — MIT Licence
  */
 
-const CARD_VERSION = '3.3.1';
+const CARD_VERSION = '3.3.2';
 
 /* ─── Calibration (personal threshold overrides) ─────────────────────
  * Priority: card config `thresholds:` → input_number helpers → defaults.
@@ -163,6 +163,8 @@ const I18N = {
     factors_header: 'Contributing Factors',
     empty: 'Configure entity sensors in the card editor to get started.',
     no_data: 'NO DATA',
+    no_forecast: 'Forecast unavailable',
+    forecast_loading: 'Loading forecast…',
     forecast_title: "Tomorrow's Forecast",
     pts: 'pts',
     rain: 'Rain',
@@ -380,6 +382,22 @@ function extractFactorValue(entity, key, def) {
 /* ─── Standalone mode: history & forecast computation ────────────── */
 
 const THUNDER_CONDITIONS = ['lightning', 'lightning-rainy', 'thunderstorm', 'storm'];
+
+// WeatherEntityFeature bits
+const FEATURE_FORECAST_DAILY = 1;
+const FEATURE_FORECAST_HOURLY = 2;
+
+// A subscription for an unsupported forecast type can be accepted and then
+// stay silent forever, so give up waiting after this long and try the other type.
+const FORECAST_TIMEOUT_MS = 8000;
+const FORECAST_RETRY_MS = 60000;   // a failed forecast is retried, not abandoned
+const FORECAST_MAX_TRIES = 5;
+
+function supportsForecast(entity, type) {
+  const f = entity && entity.attributes && entity.attributes.supported_features;
+  if (typeof f !== 'number') return true; // unknown → try anyway
+  return type === 'daily' ? !!(f & FEATURE_FORECAST_DAILY) : !!(f & FEATURE_FORECAST_HOURLY);
+}
 
 // Drop from the highest value within the last `hours` (matches the sensor
 // package semantics: pressure falling from a peak is the migraine trigger).
@@ -914,7 +932,10 @@ class MigraineRiskCard extends HTMLElement {
 
   disconnectedCallback() {
     for (const k of Object.keys(this._fc)) {
-      const u = this._fc[k] && this._fc[k].unsub;
+      const store = this._fc[k];
+      if (store && store.timer) clearTimeout(store.timer);
+      if (store && store.retry) clearTimeout(store.retry);
+      const u = store && store.unsub;
       if (u) { try { u(); } catch (e) { /* connection already closed */ } }
     }
     this._fc = {};
@@ -1157,50 +1178,154 @@ class MigraineRiskCard extends HTMLElement {
   // Live forecast via weather/subscribe_forecast (how the built-in weather
   // card works), with a one-shot weather.get_forecasts fallback.
   // Returns the current forecast array or null while pending.
+  // Live forecast via weather/subscribe_forecast (how the built-in weather
+  // card works). If the subscription fails or stays silent, fall back to a
+  // one-shot execute_script call and keep retrying on a timer instead of
+  // giving up after a single miss.
+  // Returns the forecast array, or null while pending.
   _ensureForecast(eid, type) {
     const key = eid + '|' + type;
     const store = this._fc[key];
     if (store) return store.forecast;
-    this._fc[key] = { forecast: null };
-    const conn = this._hass && this._hass.connection;
-    if (conn && conn.subscribeMessage) {
-      conn.subscribeMessage(
-        (ev) => {
-          this._fc[key].forecast = (ev && ev.forecast) || [];
-          this._update();
-        },
-        { type: 'weather/subscribe_forecast', entity_id: eid, forecast_type: type }
-      ).then(unsub => { this._fc[key].unsub = unsub; })
-       .catch(() => { this._fc[key].failed = true; this._forecastFallback(eid, type); });
-    } else {
-      this._forecastFallback(eid, type);
-    }
+
+    this._fc[key] = { forecast: null, tries: 0 };
+    this._forecastAttempt(eid, type);
     return null;
   }
 
-  _forecastFallback(eid, type) {
-    const conn = this._hass && this._hass.connection;
-    if (!conn || !conn.sendMessagePromise) return;
+  _forecastAttempt(eid, type) {
     const key = eid + '|' + type;
-    conn.sendMessagePromise({
-      type: 'call_service',
-      domain: 'weather',
-      service: 'get_forecasts',
-      service_data: { type },
-      target: { entity_id: eid },
-      return_response: true,
-    }).then(res => {
-      const fc = res && res.response && res.response[eid] && res.response[eid].forecast;
-      this._fc[key] = { forecast: fc || [], failed: !fc };
-      this._update();
-    }).catch(() => { this._fc[key] = { forecast: [], failed: true }; });
+    const store = this._fc[key];
+    if (!store) return;
+    store.tries = (store.tries || 0) + 1;
+
+    // Watchdog: a silent subscription must not leave the card waiting forever
+    store.timer = setTimeout(() => {
+      const s = this._fc[key];
+      if (!s || s.forecast != null) return;
+      if (!s.fetched) {
+        // Subscription is silent and no one-shot went out yet — ask directly
+        this._forecastFetch(eid, type);
+      } else {
+        this._forecastFailed(eid, type, 'no data within ' + (FORECAST_TIMEOUT_MS / 1000) + 's');
+      }
+    }, FORECAST_TIMEOUT_MS);
+
+    const conn = this._hass && this._hass.connection;
+    if (conn && conn.subscribeMessage) {
+      conn.subscribeMessage(
+        (ev) => this._forecastReceived(eid, type, ev && ev.forecast),
+        { type: 'weather/subscribe_forecast', entity_id: eid, forecast_type: type }
+      ).then(unsub => {
+        // The card may have been detached (or retried) while we awaited
+        if (!this._fc[key]) { try { unsub(); } catch (e) { /* already closed */ } return; }
+        this._fc[key].unsub = unsub;
+      }).catch(err => {
+        this._forecastLog(eid, type, 'subscribe_forecast failed', err);
+        this._forecastFetch(eid, type);
+      });
+      // Subscribing only guarantees *future* pushes: the first one arrives when
+      // the integration next refreshes, which can be half an hour away. Ask for
+      // the current forecast right now so the card fills in immediately.
+      this._forecastFetch(eid, type, true);
+    } else {
+      this._forecastFetch(eid, type);
+    }
   }
 
-  _update() {
-    if (!this._hass || !this._config) return;
-    ensureFonts();
-    if (!this._built) this._build();
-    this._refresh();
+  // Fallback: execute_script is the supported way for the frontend to call a
+  // service and read its response (a raw call_service with return_response is
+  // rejected by the server).
+  // One-shot read of the current forecast. `opportunistic` means a live
+  // subscription is also in flight, so a failure here is not fatal — it just
+  // means we keep waiting for the subscription's first push.
+  _forecastFetch(eid, type, opportunistic) {
+    const key = eid + '|' + type;
+    const store = this._fc[key];
+    if (!store || store.fetching) return;
+    if (store.fetched && opportunistic) return;   // never fetch twice per attempt
+    const conn = this._hass && this._hass.connection;
+    if (!conn || !conn.sendMessagePromise) {
+      if (!opportunistic) this._forecastFailed(eid, type, 'no websocket connection');
+      return;
+    }
+    store.fetching = true;
+    store.fetched = true;
+    conn.sendMessagePromise({
+      type: 'execute_script',
+      sequence: [{
+        service: 'weather.get_forecasts',
+        data: { type },
+        target: { entity_id: eid },
+        response_variable: 'result',
+      }, {
+        stop: 'done',
+        response_variable: 'result',
+      }],
+    }).then(res => {
+      const s = this._fc[key];
+      if (s) s.fetching = false;
+      // execute_script wraps the service response; shapes differ across HA
+      // versions, so accept the documented one and the plain variants.
+      const resp = (res && (res.response || res.result)) || {};
+      const holder = resp[eid] || (resp.result && resp.result[eid]) || resp;
+      const fc = (holder && holder.forecast) || null;
+      if (fc && fc.length) this._forecastReceived(eid, type, fc);
+      else if (!opportunistic) {
+        this._forecastFailed(eid, type, 'get_forecasts returned no ' + type + ' forecast');
+      } else {
+        this._forecastLog(eid, type, 'no immediate ' + type + ' forecast, waiting for a subscription push');
+      }
+    }).catch(err => {
+      const s = this._fc[key];
+      if (s) s.fetching = false;
+      if (!opportunistic) this._forecastFailed(eid, type, 'get_forecasts failed', err);
+      else this._forecastLog(eid, type, 'immediate get_forecasts failed, waiting for a subscription push', err);
+    });
+  }
+
+  _forecastReceived(eid, type, forecast) {
+    const key = eid + '|' + type;
+    const store = this._fc[key];
+    if (!store) return;                       // card detached mid-flight
+    if (store.timer) { clearTimeout(store.timer); store.timer = null; }
+    if (store.retry) { clearTimeout(store.retry); store.retry = null; }
+    store.forecast = forecast || [];
+    store.failed = false;
+    this._prevHash = '';                      // forecast is not part of the hash
+    this._update();
+  }
+
+  _forecastFailed(eid, type, reason, err) {
+    const key = eid + '|' + type;
+    const store = this._fc[key];
+    if (!store) return;
+    if (store.timer) { clearTimeout(store.timer); store.timer = null; }
+    store.failed = true;
+    store.reason = reason;
+    this._forecastLog(eid, type, reason, err);
+
+    // Retry rather than staying stuck until the page is reloaded
+    if ((store.tries || 0) < FORECAST_MAX_TRIES && !store.retry) {
+      store.retry = setTimeout(() => {
+        const s = this._fc[key];
+        if (!s) return;
+        s.retry = null;
+        s.fetched = false;
+        s.fetching = false;
+        if (s.unsub) { try { s.unsub(); } catch (e) { /* already closed */ } s.unsub = null; }
+        this._forecastAttempt(eid, type);
+      }, FORECAST_RETRY_MS);
+    }
+    this._prevHash = '';
+    this._update();
+  }
+
+  _forecastLog(eid, type, reason, err) {
+    console.warn(
+      `[migraine-risk-card] ${type} forecast for ${eid}: ${reason}` +
+      (err ? ` (${err.message || err.code || err})` : '')
+    );
   }
 
   _build() {
@@ -1240,6 +1365,13 @@ class MigraineRiskCard extends HTMLElement {
       factorGrid: card.querySelector('.factors-grid'),
     };
     this._built = true;
+  }
+
+  _update() {
+    if (!this._hass || !this._config) return;
+    ensureFonts();
+    if (!this._built) this._build();
+    this._refresh();
   }
 
   _refresh() {
@@ -1489,28 +1621,42 @@ class MigraineRiskCard extends HTMLElement {
   // Tomorrow's risk computed in-card from a weather entity's forecast.
   _refreshForecastFromWeather(bar, entity) {
     const eid = entity.entity_id;
-    const daily = this._ensureForecast(eid, 'daily');
     let data = null;
-    let isHourly = false;
+    let daily = null;
 
-    if (daily && daily.length) {
-      data = tomorrowFromForecast(daily, false);
+    // Only ask for daily if the entity advertises it — subscribing to an
+    // unsupported type can hang silently (hourly-only providers, e.g. Yandex).
+    const canDaily = supportsForecast(entity, 'daily');
+    const canHourly = supportsForecast(entity, 'hourly');
+
+    if (canDaily) {
+      daily = this._ensureForecast(eid, 'daily');
+      if (daily && daily.length) data = tomorrowFromForecast(daily, false);
     }
-    const dailyFailed = this._fc[eid + '|daily'] && this._fc[eid + '|daily'].failed;
-    const dailyEmpty = daily && daily.length === 0;
-    if (!data && (dailyFailed || dailyEmpty || (daily && !tomorrowFromForecast(daily, false)))) {
-      // Daily unsupported (e.g. hourly-only integrations) — aggregate hourly
+
+    const dailyStore = this._fc[eid + '|daily'];
+    const dailyUnusable = !canDaily
+      || (dailyStore && dailyStore.failed)          // request failed or timed out
+      || (daily && daily.length === 0)              // answered with nothing
+      || (daily && !data);                          // answered, but no entry for tomorrow
+
+    if (!data && dailyUnusable && canHourly) {
+      // Aggregate tomorrow out of the hourly forecast instead
       const hourly = this._ensureForecast(eid, 'hourly');
-      if (hourly && hourly.length) {
-        data = tomorrowFromForecast(hourly, true);
-        isHourly = true;
-      }
+      if (hourly && hourly.length) data = tomorrowFromForecast(hourly, true);
     }
 
     if (!data) {
-      // Forecast not received yet (or entity has none)
-      bar.querySelector('.forecast-risk').textContent = '…';
-      bar.querySelector('.forecast-meta').textContent = '—';
+      const hourlyStore = this._fc[eid + '|hourly'];
+      const stillWaiting = (canDaily && !dailyStore?.failed && daily == null)
+        || (canHourly && hourlyStore && !hourlyStore.failed && hourlyStore.forecast == null);
+      // Distinguish "loading" from "this entity has no usable forecast",
+      // and surface the reason so the failure is diagnosable from the card
+      const reason = (dailyStore && dailyStore.reason) || (hourlyStore && hourlyStore.reason) || '';
+      bar.querySelector('.forecast-risk').textContent = stillWaiting
+        ? tr(this._lang, 'forecast_loading')
+        : tr(this._lang, 'no_forecast');
+      bar.querySelector('.forecast-meta').textContent = stillWaiting ? '—' : (reason || '—');
       bar.querySelector('.forecast-badge').textContent = '';
       return;
     }
