@@ -261,7 +261,7 @@ The card source is [`src/migraine-risk-card.js`](src/migraine-risk-card.js); [`d
 
 Feel free to submit PR with translations. Just pick en.json, translate it and send PR with new language.
 
-Project was made using "@claude" AI.
+Project was made using @claude AI.
 
 > Keep `CARD_VERSION` in step with the release tag — the console banner and the HACS version should agree.
 
