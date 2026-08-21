@@ -15,7 +15,7 @@
  * © 2026 — MIT Licence
  */
 
-const CARD_VERSION = '3.3.2';
+const CARD_VERSION = '3.3.3';
 
 /* ─── Calibration (personal threshold overrides) ─────────────────────
  * Priority: card config `thresholds:` → input_number helpers → defaults.
@@ -401,8 +401,9 @@ function supportsForecast(entity, type) {
 
 // Drop from the highest value within the last `hours` (matches the sensor
 // package semantics: pressure falling from a peak is the migraine trigger).
-function computeDropFromPeak(points, hours, current) {
-  const cutoff = Date.now() - hours * 3600e3;
+function computeDropFromPeak(points, hours, current, sampledAt) {
+  const anchor = sampledAt || Date.now();
+  const cutoff = anchor - hours * 3600e3;
   let peak = current;
   let seen = false;
   for (const p of points) {
@@ -416,8 +417,8 @@ function computeDropFromPeak(points, hours, current) {
 }
 
 // Signed change vs. the value closest to `hours` ago (±2h tolerance).
-function computeChange(points, hours, current) {
-  const target = Date.now() - hours * 3600e3;
+function computeChange(points, hours, current, sampledAt) {
+  const target = (sampledAt || Date.now()) - hours * 3600e3;
   let best = null;
   let bestDiff = Infinity;
   for (const p of points) {
@@ -557,7 +558,7 @@ function computeFactorPoints(factorKey, rawValue, th) {
     case 'temperature_change': return ladder(Math.abs(v), t.temp_change);
     case 'wind': return ladder(v, t.wind);
     case 'uv': return ladder(v, t.uv);
-    case 'thunderstorm': return Math.min(Math.round(parseFloat(v) || 0), 2);
+    case 'thunderstorm': return Math.min(Math.max(Math.round(parseFloat(v) || 0), 0), 2);
     case 'air_quality': return Math.min(ladder(v, t.aqi, true), FACTORS.air_quality.maxPts);
     default: return 0;
   }
@@ -931,6 +932,7 @@ class MigraineRiskCard extends HTMLElement {
   }
 
   disconnectedCallback() {
+    this._hist = {};   // drop cached history so re-created cards don't accumulate
     for (const k of Object.keys(this._fc)) {
       const store = this._fc[k];
       if (store && store.timer) clearTimeout(store.timer);
@@ -1085,10 +1087,17 @@ class MigraineRiskCard extends HTMLElement {
         const current = this._currentMetric(entity, mode);
         if (current == null) return { score: null, display: null, unit: '' };
         const series = this._ensureHistory(entity.entity_id, mode);
-        if (!series || !series.points) return { score: null, display: null, unit, pending: true };
+        if (!series || !series.points) {
+          // Distinguish a pending fetch from one that failed: a failed history
+          // read must not leave the tile spinning on "…" until the cache expires
+          const failed = series && series.failed;
+          return { score: null, display: null, unit, pending: !failed, unavailable: !!failed };
+        }
+        // series.ts is when the history was sampled; anchoring the window to it
+        // keeps the result stable between renders instead of drifting with the clock
         const val = mode === 'pressure'
-          ? computeDropFromPeak(series.points, hours, current)
-          : computeChange(series.points, hours, current);
+          ? computeDropFromPeak(series.points, hours, current, series.ts)
+          : computeChange(series.points, hours, current, series.ts);
         if (val == null) return { score: null, display: null, unit, pending: true };
         return { score: Math.abs(val), display: Math.round(val * 10) / 10, unit };
       }
@@ -1168,9 +1177,19 @@ class MigraineRiskCard extends HTMLElement {
       }
       this._hist[key] = { ts: Date.now(), points, fetching: false };
       this._update();
-    }).catch(() => {
+    }).catch((err) => {
       // Keep stale points if we had them; retry after the cache window
-      this._hist[key] = { ts: Date.now(), points: cached ? cached.points : null, fetching: false };
+      this._hist[key] = {
+        ts: Date.now(),
+        points: cached ? cached.points : null,
+        fetching: false,
+        failed: !(cached && cached.points),
+      };
+      console.warn(`[migraine-risk-card] history for ${eid} (${mode}) failed: ${err && (err.message || err)}`);
+      // Re-render: without this the tile stays on "…" until some unrelated
+      // entity changes and happens to alter the state hash.
+      this._prevHash = '';
+      this._update();
     });
     return this._hist[key];
   }
@@ -1523,6 +1542,7 @@ class MigraineRiskCard extends HTMLElement {
     const ex = extracted || extractFactorValue(entity, key, def);
 
     if (ex.pending) return '…';
+    if (ex.unavailable) return '—';
 
     if (key === 'thunderstorm') {
       const code = String(ex.score ?? st);
