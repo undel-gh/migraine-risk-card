@@ -6,13 +6,8 @@ A science-backed environmental migraine risk monitoring card for Home Assistant.
 
 ## Why I Built This
 
-I'm a chronic migraine sufferer, and over the years I've learned that my migraines don't just appear out of nowhere — they follow the weather. A pressure drop before a storm front, a sudden temperature swing, poor air-quality days — these are the invisible triggers that can send me reaching for medication hours later.
-
-Knowing this changed everything for me. If I can see the environmental warning signs *before* symptoms hit, I can take my preemptive medication early and actually get ahead of an attack instead of chasing it. So I built a system in Home Assistant that watches the weather for me and tells me when conditions are stacking up.
-
-I shared a few screenshots of my dashboard with friends, and then they shared them, and before long people were asking how they could set it up for themselves. So here it is — the same system I rely on every day, packaged up for anyone who wants to take back a little control from their migraines.
-
-I hope it helps you as much as it's helped me.
+This is a fork of [Project](https://github.com/GreenNovaEmma/migraine-risk-card) which had wonderful idea, but lacked technical quality and seamless user interface. So, I completely rebuilt it from scratch and made some improvements based on user feedback from original repo.
+All credit to idea and sensor package go to original author.
 
 ## What's New in 3.0
 
