@@ -147,8 +147,10 @@ input_text:
 
 
 ###############################################################################
-# INPUT HELPERS — pressure & temperature tracking state
-# (These are managed automatically by the automations below)
+# INPUT HELPERS — calibration plus legacy tracking state
+# pressure_*_peak/reset_time and temperature_6h_baseline/reset_time are retained
+# for 1.x/2.x compatibility only. v3.4 rolling calculations do not read or
+# update them; they are candidates for removal in a future major release.
 ###############################################################################
 
 input_boolean:
@@ -411,6 +413,10 @@ input_number:
 # ROLLING-WINDOW STATISTICS
 # v3.4 replaces the old 6h/24h reset automations with true max_age windows.
 # The statistics integration restores its buffer from Recorder on startup.
+# Without Recorder history, a restored window initially covers only samples
+# collected since startup until the configured max_age has elapsed.
+# The *_rolling sensors are internal helpers; consume the public template delta
+# sensors below for scoring/card mappings.
 ###############################################################################
 
 sensor:

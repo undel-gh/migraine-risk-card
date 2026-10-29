@@ -65,7 +65,9 @@ assert.equal(m.extractFactorValue({
 assert(source.includes('significant_changes_only=0'), 'history must include attribute-only changes');
 assert(source.includes('s.last_updated || s.last_changed'), 'history must timestamp attribute changes by last_updated');
 assert(source.includes("(a.pressure ?? '')"), 'weather pressure must participate in the state hash');
-assert(source.includes("entity_temperature_change: 'migraine_temperature_change_6h'"), 'stub config must prefer the delta sensor');
+const translationLoader = source.slice(source.indexOf('function loadTranslation'), source.indexOf('function dictFor'));
+assert(!translationLoader.includes('Promise.resolve().then(onLoad)'), 'cached translations must not schedule redundant renders');
+assert(source.includes("'sensor.migraine_temperature_change_6h', ['_rolling']"), 'stub config must prefer the public delta sensor over the rolling helper');
 assert(source.includes("if (!customElements.get('migraine-risk-card'))"), 'duplicate resource registration must be guarded');
 const editorStart = source.indexOf('class MigraineRiskCardEditor');
 const editorTranslation = source.slice(editorStart, source.indexOf('  _render() {', editorStart));

@@ -125,6 +125,8 @@ A few things worth knowing when choosing what to feed each factor:
 
 Starting with v3.0, the card does **not** use `sensor-package/migraine_sensors.yaml` as its backend. The package is retained as an optional compatibility/server-side layer for users migrating from 1.x/2.x installations and for users who explicitly want server-side score entities, automations, or WAQI-derived sensors. A normal standalone 3.x installation does not need it. In v3.4 its pressure/temperature windows were also changed to true rolling Statistics windows so legacy package users no longer get reset-boundary discontinuities.
 
+> **Recorder note for the optional package:** the Statistics sensors restore their rolling buffers from Recorder after a restart. If Recorder is disabled, the database was cleared, or the source entities are excluded, a nominal 6h/24h window initially covers only the samples collected since startup and becomes a full window only after enough time has elapsed. Use the public `sensor.migraine_temperature_change_6h` delta sensor rather than the internal `*_rolling` Statistics helper.
+
 1. Enable packages in `configuration.yaml`:
    ```yaml
    homeassistant:

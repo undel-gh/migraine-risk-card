@@ -248,7 +248,10 @@ function translationBases(config) {
 function flushTranslationWaiters(lang) {
   const waiters = TRANSLATION_WAITERS[lang] || [];
   delete TRANSLATION_WAITERS[lang];
-  waiters.forEach(cb => { try { cb(); } catch (e) { /* rendering callback */ } });
+  waiters.forEach(cb => {
+    try { cb(); }
+    catch (e) { console.warn(`[migraine-risk-card] translation callback for ${lang} failed`, e); }
+  });
 }
 
 // Fetch a language once, fan the result out to every card waiting for it, and
@@ -256,14 +259,13 @@ function flushTranslationWaiters(lang) {
 function loadTranslation(lang, config, onLoad) {
   if (!lang) return;
   const state = LOADED_TRANSLATIONS[lang];
-  if (state && state !== 'loading' && state !== 'failed') {
-    if (onLoad) Promise.resolve().then(onLoad);
-    return;
-  }
-  if (state === 'failed' && Date.now() - (TRANSLATION_FAILED_AT[lang] || 0) < TRANSLATION_RETRY_MS) {
-    if (onLoad) Promise.resolve().then(onLoad); // built-in EN fallback is already usable
-    return;
-  }
+  // A cached dictionary is already visible to tr() synchronously. Do not fire
+  // onLoad again: set hass() calls this on every HA state update, and doing so
+  // would defeat the card's state-hash short-circuit and force a second render.
+  if (state && state !== 'loading' && state !== 'failed') return;
+  // A failed load has already flushed the original waiters so they could render
+  // the built-in English fallback. Stay quiet until the retry window expires.
+  if (state === 'failed' && Date.now() - (TRANSLATION_FAILED_AT[lang] || 0) < TRANSLATION_RETRY_MS) return;
   if (onLoad) (TRANSLATION_WAITERS[lang] ||= []).push(onLoad);
   if (state === 'loading') return;
 
@@ -1019,29 +1021,35 @@ class MigraineRiskCard extends HTMLElement {
 
   static getStubConfig(hass) {
     const ids = Object.keys(hass.states);
-    const find = (p) => ids.find(id => id.includes(p)) || '';
-    const cfg = { type: 'custom:migraine-risk-card' };
-    // Auto-detect integration entities
-    const rs = find('migraine_risk_score');
-    if (rs) cfg.entity_risk_score = rs;
-    const rl = find('migraine_risk_level');
-    if (rl) cfg.entity_risk_level = rl;
-    const fc = find('migraine_risk_forecast');
-    if (fc) cfg.entity_forecast = fc;
-    // Factor entities
-    const map = {
-      entity_pressure_6h: 'pressure_drop_6h',
-      entity_pressure_24h: 'pressure_drop_24h',
-      entity_humidity: 'migraine_humidity',
-      entity_temperature: 'migraine_temperature',
-      entity_temperature_change: 'migraine_temperature_change_6h',
-      entity_wind_speed: 'migraine_wind',
-      entity_uv_index: 'migraine_uv',
-      entity_storm: 'thunderstorm',
-      entity_air_quality: 'waqi_aqi',
+    const find = (pattern, exact = '', exclude = []) => {
+      if (exact && ids.includes(exact)) return exact;
+      return ids.find(id => id.includes(pattern) && !exclude.some(x => id.includes(x))) || '';
     };
-    for (const [key, pattern] of Object.entries(map)) {
-      const e = find(pattern);
+    const cfg = { type: 'custom:migraine-risk-card' };
+    // Prefer canonical package IDs, then fall back to a conservative substring
+    // match for renamed/legacy installations.
+    const rs = find('migraine_risk_score', 'sensor.migraine_risk_score');
+    if (rs) cfg.entity_risk_score = rs;
+    const rl = find('migraine_risk_level', 'sensor.migraine_risk_level');
+    if (rl) cfg.entity_risk_level = rl;
+    const fc = find('migraine_risk_forecast', 'sensor.migraine_risk_forecast_tomorrow');
+    if (fc) cfg.entity_forecast = fc;
+    // Factor entities. In particular, never pick the signed Statistics
+    // *_rolling helper instead of the public absolute 6h delta sensor.
+    const map = {
+      entity_pressure_6h: ['pressure_drop_6h', 'sensor.migraine_pressure_drop_6h'],
+      entity_pressure_24h: ['pressure_drop_24h', 'sensor.migraine_pressure_drop_24h'],
+      entity_humidity: ['migraine_humidity', 'sensor.migraine_humidity'],
+      entity_temperature: ['migraine_temperature', 'sensor.migraine_temperature', ['temperature_change_6h']],
+      entity_temperature_change: ['migraine_temperature_change_6h', 'sensor.migraine_temperature_change_6h', ['_rolling']],
+      entity_wind_speed: ['migraine_wind', 'sensor.migraine_wind_speed'],
+      entity_uv_index: ['migraine_uv', 'sensor.migraine_uv_index'],
+      entity_storm: ['thunderstorm', ''],
+      entity_air_quality: ['waqi_aqi', ''],
+    };
+    for (const [key, spec] of Object.entries(map)) {
+      const [pattern, exact, exclude = []] = spec;
+      const e = find(pattern, exact, exclude);
       if (e) cfg[key] = e;
     }
     return cfg;
