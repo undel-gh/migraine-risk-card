@@ -1,0 +1,44 @@
+name: Apply 3.4.0 review follow-up
+
+on:
+  push:
+    branches:
+      - release/3.4.0-quality-reliability
+    paths:
+      - .github/workflows/review-followup-3-4.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout release branch
+        uses: actions/checkout@v4
+        with:
+          ref: release/3.4.0-quality-reliability
+          fetch-depth: 0
+
+      - name: Apply review follow-up
+        run: python3 scripts/review_followup_3_4.py
+
+      - name: Syntax check
+        run: node --check src/migraine-risk-card.js
+
+      - name: Regression tests
+        run: node tests/test-core.js
+
+      - name: Verify dist sync
+        run: diff -u src/migraine-risk-card.js dist/migraine-risk-card.js
+
+      - name: Check whitespace
+        run: git diff --check
+
+      - name: Commit fixes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/migraine-risk-card.js dist/migraine-risk-card.js tests/test-core.js README.md sensor-package/migraine_sensors.yaml RELEASE_NOTES_3.4.0.md
+          git commit -m "Address 3.4.0 review findings"
+          git push origin HEAD:release/3.4.0-quality-reliability
