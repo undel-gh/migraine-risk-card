@@ -337,7 +337,7 @@ function windToKmh(v, unit) {
   switch (String(unit || '').toLowerCase()) {
     case 'm/s': case 'm/с': case 'м/с': return v * 3.6;
     case 'mph': return v * 1.60934;
-    case 'kn': case 'knots': return v * 1.852;
+    case 'kn': case 'kt': case 'knots': return v * 1.852;
     default: return v; // km/h
   }
 }
@@ -415,7 +415,8 @@ const FEATURE_FORECAST_HOURLY = 2;
 // A subscription for an unsupported forecast type can be accepted and then
 // stay silent forever, so give up waiting after this long and try the other type.
 const FORECAST_TIMEOUT_MS = 8000;
-const FORECAST_RETRY_MS = 60000;   // a failed forecast is retried, not abandoned
+const FORECAST_RETRY_MS = 60000;   // quick retries for transient failures
+const FORECAST_RECOVERY_MS = 15 * 60e3; // keep self-healing after the quick retry budget
 const FORECAST_MAX_TRIES = 5;
 
 function supportsForecast(entity, type) {
@@ -1171,12 +1172,14 @@ class MigraineRiskCard extends HTMLElement {
       }
     }
     if (entity && key === 'thunderstorm' && entity.entity_id.startsWith('weather.')) {
-      const fc = this._ensureForecast(entity.entity_id, 'hourly');
-      if (fc && fc.length) {
-        const level = thunderLevelFromHourly(fc, this._hass?.config?.time_zone);
-        return { score: level, display: level, unit: '' };
+      if (supportsForecast(entity, 'hourly')) {
+        const fc = this._ensureForecast(entity.entity_id, 'hourly');
+        if (fc && fc.length) {
+          const level = thunderLevelFromHourly(fc, this._hass?.config?.time_zone);
+          return { score: level, display: level, unit: '' };
+        }
       }
-      // No forecast (yet) — fall through to current-condition detection
+      // No usable hourly forecast (yet) — fall through to current-condition detection
     }
     return extractFactorValue(entity, key, def);
   }
@@ -1265,12 +1268,8 @@ class MigraineRiskCard extends HTMLElement {
   }
 
   // Live forecast via weather/subscribe_forecast (how the built-in weather
-  // card works), with a one-shot weather.get_forecasts fallback.
-  // Returns the current forecast array or null while pending.
-  // Live forecast via weather/subscribe_forecast (how the built-in weather
   // card works). If the subscription fails or stays silent, fall back to a
-  // one-shot execute_script call and keep retrying on a timer instead of
-  // giving up after a single miss.
+  // one-shot weather.get_forecasts service call and keep retrying.
   // Returns the forecast array, or null while pending.
   _ensureForecast(eid, type) {
     const key = eid + '|' + type;
@@ -1322,12 +1321,11 @@ class MigraineRiskCard extends HTMLElement {
     }
   }
 
-  // Fallback: execute_script is the supported way for the frontend to call a
-  // service and read its response (a raw call_service with return_response is
-  // rejected by the server).
-  // One-shot read of the current forecast. `opportunistic` means a live
-  // subscription is also in flight, so a failure here is not fatal — it just
-  // means we keep waiting for the subscription's first push.
+  // One-shot read of the current forecast. Home Assistant's websocket
+  // call_service command has supported response-returning services since before
+  // our minimum HA 2024.6, and unlike execute_script it is not admin-only.
+  // `opportunistic` means a live subscription is also in flight, so a failure
+  // here is not fatal — it just means we keep waiting for its first push.
   _forecastFetch(eid, type, opportunistic) {
     const key = eid + '|' + type;
     const store = this._fc[key];
@@ -1341,23 +1339,17 @@ class MigraineRiskCard extends HTMLElement {
     store.fetching = true;
     store.fetched = true;
     conn.sendMessagePromise({
-      type: 'execute_script',
-      sequence: [{
-        service: 'weather.get_forecasts',
-        data: { type },
-        target: { entity_id: eid },
-        response_variable: 'result',
-      }, {
-        stop: 'done',
-        response_variable: 'result',
-      }],
+      type: 'call_service',
+      domain: 'weather',
+      service: 'get_forecasts',
+      service_data: { type },
+      target: { entity_id: eid },
+      return_response: true,
     }).then(res => {
       const s = this._fc[key];
       if (s) s.fetching = false;
-      // execute_script wraps the service response; shapes differ across HA
-      // versions, so accept the documented one and the plain variants.
-      const resp = (res && (res.response || res.result)) || res || {};
-      const holder = resp[eid] || (resp.result && resp.result[eid]) || resp;
+      const resp = (res && res.response) || {};
+      const holder = resp[eid] || resp;
       const fc = (holder && holder.forecast) || null;
       if (fc && fc.length) this._forecastReceived(eid, type, fc);
       else if (!opportunistic) {
@@ -1394,17 +1386,20 @@ class MigraineRiskCard extends HTMLElement {
     store.reason = reason;
     this._forecastLog(eid, type, reason, err);
 
-    // Retry rather than staying stuck until the page is reloaded
-    if ((store.tries || 0) < FORECAST_MAX_TRIES && !store.retry) {
+    // Retry quickly a few times, then keep a low-frequency recovery loop so
+    // transient HA/provider outages can self-heal without a browser refresh.
+    if (!store.retry) {
+      const exhausted = (store.tries || 0) >= FORECAST_MAX_TRIES;
       store.retry = setTimeout(() => {
         const s = this._fc[key];
         if (!s) return;
         s.retry = null;
         s.fetched = false;
         s.fetching = false;
+        if (exhausted) s.tries = 0;
         if (s.unsub) { try { s.unsub(); } catch (e) { /* already closed */ } s.unsub = null; }
         this._forecastAttempt(eid, type);
-      }, FORECAST_RETRY_MS);
+      }, exhausted ? FORECAST_RECOVERY_MS : FORECAST_RETRY_MS);
     }
     this._prevHash = '';
     this._update();

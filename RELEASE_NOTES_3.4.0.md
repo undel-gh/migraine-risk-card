@@ -10,6 +10,7 @@ This release keeps the v3 scoring model unchanged and focuses on hidden correctn
 - Made forecast day selection use the Home Assistant timezone.
 - Replaced endless history loading with a clear unavailable state when Recorder data is insufficient.
 - Hardened translation loading for multiple cards and transient failures.
+- Switched the one-shot forecast fallback from admin-only `execute_script` to response-capable `call_service` (supported by the minimum HA 2024.6) and added long-term recovery retries.
 - Cleaned old history/forecast subscriptions when editor source entities change.
 - Removed stale forecast UI when a configured forecast entity disappears.
 - Recognised `storm` / `thunderstorm` current weather conditions.
@@ -24,7 +25,8 @@ The package remains optional and is not used by the standalone v3.x card. For us
 - Added unit-aware °F/°C and kPa/mmHg/inHg/psi/hPa conversion.
 - Added support for lower station pressure at altitude.
 - Removed absolute pressure/temperature device classes from delta sensors.
-- Normalised tomorrow forecast temperatures to °C before scoring.
+- Normalised tomorrow forecast temperatures to °C before scoring, including legacy helper-sensor inputs.
+- Propagated pressure/risk unavailability instead of presenting a false `Low` state when required pressure data is missing.
 
 ## Project quality
 

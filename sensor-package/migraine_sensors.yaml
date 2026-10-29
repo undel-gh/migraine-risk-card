@@ -861,7 +861,9 @@ template:
         unique_id: migraine_risk_score
         unit_of_measurement: "pts"
         availability: >
-          {{ states('sensor.migraine_pressure_hpa') not in ['unknown','unavailable','',none] }}
+          {{ states('sensor.migraine_pressure_hpa') not in ['unknown','unavailable','',none]
+             and states('sensor.migraine_pressure_drop_6h') not in ['unknown','unavailable','',none]
+             and states('sensor.migraine_pressure_drop_24h') not in ['unknown','unavailable','',none] }}
         state: >
           {% set d6 = states('sensor.migraine_pressure_drop_6h') | float(0) %}
           {% set d24 = states('sensor.migraine_pressure_drop_24h') | float(0) %}
@@ -907,6 +909,8 @@ template:
 
       - name: Migraine Risk Level
         unique_id: migraine_risk_level
+        availability: >
+          {{ states('sensor.migraine_risk_score') not in ['unknown','unavailable','',none] }}
         state: >
           {% set s = states('sensor.migraine_risk_score') | int(0) %}
           {% if s >= 12 %}
@@ -959,8 +963,12 @@ template:
           {% set uv_entity = states('input_text.migraine_source_forecast_uv') %}
           {% set fc_entity = states('input_text.migraine_source_forecast_text') %}
           {% set rain_entity = states('input_text.migraine_source_forecast_rain_chance') %}
-          {% set helper_tmax = states(tmax_entity) | float(none) if tmax_entity not in ['not_configured','unknown','unavailable','',none] else none %}
-          {% set helper_tmin = states(tmin_entity) | float(none) if tmin_entity not in ['not_configured','unknown','unavailable','',none] else none %}
+          {% set helper_tmax_raw = states(tmax_entity) | float(none) if tmax_entity not in ['not_configured','unknown','unavailable','',none] else none %}
+          {% set helper_tmin_raw = states(tmin_entity) | float(none) if tmin_entity not in ['not_configured','unknown','unavailable','',none] else none %}
+          {% set tmax_unit = state_attr(tmax_entity, 'unit_of_measurement') | lower if tmax_entity not in ['not_configured','unknown','unavailable','',none] and state_attr(tmax_entity, 'unit_of_measurement') is not none else '' %}
+          {% set tmin_unit = state_attr(tmin_entity, 'unit_of_measurement') | lower if tmin_entity not in ['not_configured','unknown','unavailable','',none] and state_attr(tmin_entity, 'unit_of_measurement') is not none else '' %}
+          {% set helper_tmax = ((helper_tmax_raw - 32) * 5 / 9) if helper_tmax_raw is not none and tmax_unit in ['°f','f','fahrenheit'] else helper_tmax_raw %}
+          {% set helper_tmin = ((helper_tmin_raw - 32) * 5 / 9) if helper_tmin_raw is not none and tmin_unit in ['°f','f','fahrenheit'] else helper_tmin_raw %}
           {% set helper_uv = states(uv_entity) | float(none) if uv_entity not in ['not_configured','unknown','unavailable','',none] else none %}
           {% set helper_rain = states(rain_entity) | float(none) if rain_entity not in ['not_configured','unknown','unavailable','',none] else none %}
           {% set tmax = fd_tmax | float(none) if fd_tmax is not none else helper_tmax %}
@@ -1180,6 +1188,8 @@ template:
                 {{ (v | float(0)) * 3.6 }}
               {% elif 'mph' in u %}
                 {{ (v | float(0)) * 1.60934 }}
+              {% elif u in ['kn','kt','knots'] %}
+                {{ (v | float(0)) * 1.852 }}
               {% else %}
                 {{ v | float(0) }}
               {% endif %}
@@ -1274,7 +1284,8 @@ template:
       - name: Migraine Risk Warning
         unique_id: migraine_risk_warning
         device_class: problem
-        state: "{{ states('sensor.migraine_risk_score') | int >= 8 }}"
+        availability: "{{ states('sensor.migraine_risk_score') not in ['unknown','unavailable','',none] }}"
+        state: "{{ states('sensor.migraine_risk_score') | int(0) >= 8 }}"
         icon: >
           {% if is_state(this.entity_id,'on') %}mdi:alert{% else %}mdi:check{% endif %}
 

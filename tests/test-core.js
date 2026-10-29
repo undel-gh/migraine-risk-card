@@ -28,6 +28,7 @@ close(m.tempToC(86, '°F'), 30);
 close(m.pressureToHpa(101.3, 'kPa'), 1013);
 close(m.pressureToHpa(760, 'mmHg'), 1013.2472, 0.001);
 close(m.windToKmh(10, 'm/s'), 36);
+close(m.windToKmh(10, 'kt'), 18.52);
 
 // Rolling pressure peak and temperature-change tolerance.
 const anchor = Date.parse('2026-10-29T12:00:00Z');
@@ -66,5 +67,8 @@ assert(source.includes('s.last_updated || s.last_changed'), 'history must timest
 assert(source.includes("(a.pressure ?? '')"), 'weather pressure must participate in the state hash');
 assert(source.includes("entity_temperature_change: 'migraine_temperature_change_6h'"), 'stub config must prefer the delta sensor');
 assert(source.includes("if (!customElements.get('migraine-risk-card'))"), 'duplicate resource registration must be guarded');
+assert(source.includes("type: 'call_service'"), 'forecast fallback must use non-admin websocket call_service');
+assert(!source.includes("type: 'execute_script'"), 'forecast fallback must not require admin-only execute_script');
+assert(source.includes('FORECAST_RECOVERY_MS'), 'forecast failures must retain a long-term recovery path');
 
 console.log('All migraine-risk-card core tests passed.');
