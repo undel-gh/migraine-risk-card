@@ -32,6 +32,13 @@ jobs:
       - name: Verify release artifact sync
         run: diff -u src/migraine-risk-card.js dist/migraine-risk-card.js
 
+      - name: Restore workflow-managed files
+        run: |
+          git checkout HEAD -- .github/workflows/validate.yml
+          git checkout HEAD -- .github/workflows/hacs.yml
+          git checkout HEAD -- .github/workflows/prepare-3.4.0.yml
+          git checkout HEAD -- scripts/prepare_3_4_0.py
+
       - name: Check whitespace
         run: git diff --check
 
