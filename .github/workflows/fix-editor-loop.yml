@@ -47,3 +47,5 @@ jobs:
           git add -A
           git commit -m "Fix visual editor translation render loop"
           git push origin HEAD:release/3.4.0-quality-reliability
+
+# Triggered after staging the patch script.
