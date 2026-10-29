@@ -11,8 +11,7 @@ text = text.replace(old_header, new_header, 1)
 
 start = text.index('  static getStubConfig(')
 end = text.index('\n\n  setConfig(config) {', start)
-old_stub = text[start:end]
-new_stub = """  static getStubConfig() {\n    // v3.x is standalone-first. Do not guess a user's weather provider,\n    // location, sensor choice, or legacy-package mode from hass.states.\n    // Integration/package entities remain available through explicit editor\n    // configuration, preserving existing cards without silently opting new\n    // cards into a legacy backend.\n    return { type: 'custom:migraine-risk-card' };\n  }"""
+new_stub = """  static getStubConfig() {\n    // v3.x is standalone-first. Do not guess a user's weather provider,\n    // location, sensor choice, or legacy-package mode from existing entities.\n    // Integration/package entities remain available through explicit editor\n    // configuration, preserving existing cards without silently opting new\n    // cards into a legacy backend.\n    return { type: 'custom:migraine-risk-card' };\n  }"""
 text = text[:start] + new_stub + text[end:]
 SRC.write_text(text)
 Path('dist/migraine-risk-card.js').write_text(text)
@@ -20,7 +19,7 @@ Path('dist/migraine-risk-card.js').write_text(text)
 TEST = Path('tests/test-core.js')
 t = TEST.read_text()
 old = """assert(source.includes(\"'sensor.migraine_temperature_change_6h', ['_rolling']\"), 'stub config must prefer the public delta sensor over the rolling helper');\n"""
-new = """const stubStart = source.indexOf('  static getStubConfig(');\nconst stubEnd = source.indexOf('\\n\\n  setConfig(config) {', stubStart);\nconst stubConfig = source.slice(stubStart, stubEnd);\nassert(stubConfig.includes(\"return { type: 'custom:migraine-risk-card' };\"), 'new cards must start with an explicit-source stub');\nassert(!stubConfig.includes('hass.states'), 'stub config must not auto-detect Home Assistant entities');\nassert(!stubConfig.includes('migraine_'), 'stub config must not silently opt into legacy package entities');\n"""
+new = """const stubStart = source.indexOf('  static getStubConfig(');\nconst stubEnd = source.indexOf('\\n\\n  setConfig(config) {', stubStart);\nconst stubConfig = source.slice(stubStart, stubEnd);\nassert(stubConfig.includes(\"return { type: 'custom:migraine-risk-card' };\"), 'new cards must start with an explicit-source stub');\nassert(!stubConfig.includes('Object.keys('), 'stub config must not enumerate Home Assistant entities');\nassert(!stubConfig.includes('const find ='), 'stub config must not guess source entities');\nassert(!stubConfig.includes('sensor.migraine_'), 'stub config must not silently opt into legacy package entities');\n"""
 if old not in t:
     raise SystemExit('old stub regression assertion not found')
 t = t.replace(old, new, 1)
