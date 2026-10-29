@@ -9,13 +9,13 @@
  *
  * All factor entities are optional. The card only shows what you configure.
  *
- * Installation: Copy to /config/www/migraine-risk-card.js
- * Add resource: /local/migraine-risk-card.js (JavaScript Module)
+ * Installation: HACS is recommended. Manual installs must copy the full dist/
+ * directory (card + translations) and register dist/migraine-risk-card.js.
  *
  * © 2026 — MIT Licence
  */
 
-const CARD_VERSION = '3.3.3';
+const CARD_VERSION = '3.4.0';
 
 /* ─── Calibration (personal threshold overrides) ─────────────────────
  * Priority: card config `thresholds:` → input_number helpers → defaults.
@@ -236,27 +236,52 @@ const TRANSLATION_PATHS = [
 
 // lang → dictionary | 'loading' | 'failed'
 const LOADED_TRANSLATIONS = {};
+const TRANSLATION_WAITERS = {};
+const TRANSLATION_FAILED_AT = {};
+const TRANSLATION_RETRY_MS = 5 * 60e3;
 
 function translationBases(config) {
   const custom = config && config.translations_path;
   return custom ? [custom.replace(/\/?$/, '/')] : TRANSLATION_PATHS;
 }
 
-// Fetches a language file once; calls onLoad when it becomes available.
+function flushTranslationWaiters(lang) {
+  const waiters = TRANSLATION_WAITERS[lang] || [];
+  delete TRANSLATION_WAITERS[lang];
+  waiters.forEach(cb => { try { cb(); } catch (e) { /* rendering callback */ } });
+}
+
+// Fetch a language once, fan the result out to every card waiting for it, and
+// allow a later retry after a transient HTTP/network failure.
 function loadTranslation(lang, config, onLoad) {
-  if (!lang || LOADED_TRANSLATIONS[lang]) return;
+  if (!lang) return;
+  const state = LOADED_TRANSLATIONS[lang];
+  if (state && state !== 'loading' && state !== 'failed') {
+    if (onLoad) Promise.resolve().then(onLoad);
+    return;
+  }
+  if (state === 'failed' && Date.now() - (TRANSLATION_FAILED_AT[lang] || 0) < TRANSLATION_RETRY_MS) {
+    if (onLoad) Promise.resolve().then(onLoad); // built-in EN fallback is already usable
+    return;
+  }
+  if (onLoad) (TRANSLATION_WAITERS[lang] ||= []).push(onLoad);
+  if (state === 'loading') return;
+
   LOADED_TRANSLATIONS[lang] = 'loading';
   const bases = translationBases(config);
   const attempt = (i) => {
     if (i >= bases.length) {
       LOADED_TRANSLATIONS[lang] = 'failed';
+      TRANSLATION_FAILED_AT[lang] = Date.now();
+      flushTranslationWaiters(lang);
       return;
     }
     fetch(bases[i] + lang + '.json', { cache: 'no-cache' })
       .then(r => (r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status))))
       .then(dict => {
         LOADED_TRANSLATIONS[lang] = dict;
-        if (onLoad) onLoad();
+        delete TRANSLATION_FAILED_AT[lang];
+        flushTranslationWaiters(lang);
       })
       .catch(() => attempt(i + 1));
   };
@@ -358,7 +383,7 @@ function extractFactorValue(entity, key, def) {
   // weather.* entity: read from attributes
   if (key === 'thunderstorm') {
     const cond = String(entity.state || '');
-    const v = cond.startsWith('lightning') ? 2 : 0;
+    const v = THUNDER_CONDITIONS.includes(cond) ? 2 : 0;
     return { score: v, display: v, unit: '' };
   }
 
@@ -399,6 +424,33 @@ function supportsForecast(entity, type) {
   return type === 'daily' ? !!(f & FEATURE_FORECAST_DAILY) : !!(f & FEATURE_FORECAST_HOURLY);
 }
 
+function dateKeyInTimeZone(value, timeZone) {
+  const d = value instanceof Date ? value : new Date(value);
+  if (isNaN(d.getTime())) return null;
+  if (!timeZone) return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone, year: 'numeric', month: '2-digit', day: '2-digit',
+  }).formatToParts(d);
+  const get = (type) => parts.find(p => p.type === type)?.value;
+  return `${get('year')}-${get('month')}-${get('day')}`;
+}
+
+function tomorrowDateKey(timeZone, nowMs) {
+  const today = dateKeyInTimeZone(nowMs == null ? Date.now() : nowMs, timeZone);
+  if (!today) return null;
+  const [y, m, d] = today.split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1, d + 1)).toISOString().slice(0, 10);
+}
+
+function hourInTimeZone(value, timeZone) {
+  const d = value instanceof Date ? value : new Date(value);
+  if (isNaN(d.getTime())) return null;
+  if (!timeZone) return d.getHours();
+  const hour = new Intl.DateTimeFormat('en-US', { timeZone, hour: '2-digit', hourCycle: 'h23' })
+    .formatToParts(d).find(p => p.type === 'hour')?.value;
+  return hour == null ? null : Number(hour);
+}
+
 // Drop from the highest value within the last `hours` (matches the sensor
 // package semantics: pressure falling from a peak is the migraine trigger).
 function computeDropFromPeak(points, hours, current, sampledAt) {
@@ -430,9 +482,9 @@ function computeChange(points, hours, current, sampledAt) {
 }
 
 // 2 = thunderstorm within the next 3 hours, 1 = later today, 0 = none.
-function thunderLevelFromHourly(forecast) {
+function thunderLevelFromHourly(forecast, timeZone) {
   const now = Date.now();
-  const todayStr = new Date().toDateString();
+  const todayStr = dateKeyInTimeZone(Date.now(), timeZone);
   let next3 = false;
   let today = false;
   for (const f of forecast || []) {
@@ -440,18 +492,18 @@ function thunderLevelFromHourly(forecast) {
     const t = new Date(f.datetime).getTime();
     if (isNaN(t)) continue;
     if (t >= now - 3600e3 && t <= now + 3 * 3600e3) next3 = true;
-    if (new Date(f.datetime).toDateString() === todayStr) today = true;
+    if (dateKeyInTimeZone(f.datetime, timeZone) === todayStr) today = true;
   }
   return next3 ? 2 : today ? 1 : 0;
 }
 
 // Extract tomorrow's data from a daily forecast, or aggregate hourly entries.
-function tomorrowFromForecast(forecast, isHourly) {
-  const tomorrow = new Date(Date.now() + 24 * 3600e3).toDateString();
+function tomorrowFromForecast(forecast, isHourly, timeZone) {
+  const tomorrow = tomorrowDateKey(timeZone);
   const entries = (forecast || []).filter(f => {
     if (!f || !f.datetime) return false;
     const d = new Date(f.datetime);
-    return !isNaN(d.getTime()) && d.toDateString() === tomorrow;
+    return !isNaN(d.getTime()) && dateKeyInTimeZone(d, timeZone) === tomorrow;
   });
   if (!entries.length) return null;
   if (!isHourly) {
@@ -472,8 +524,8 @@ function tomorrowFromForecast(forecast, isHourly) {
   const min = (a) => a.length ? Math.min(...a) : null;
   // Condition at midday is the most representative for an aggregated day
   const midday = entries.reduce((best, e) =>
-    Math.abs(new Date(e.datetime).getHours() - 13) <
-    Math.abs(new Date(best.datetime).getHours() - 13) ? e : best, entries[0]);
+    Math.abs((hourInTimeZone(e.datetime, timeZone) ?? 13) - 13) <
+    Math.abs((hourInTimeZone(best.datetime, timeZone) ?? 13) - 13) ? e : best, entries[0]);
   return {
     temp_max: max(temps),
     temp_min: min(temps),
@@ -486,11 +538,13 @@ function tomorrowFromForecast(forecast, isHourly) {
 }
 
 // Mirror of the sensor package's tomorrow scoring.
-function scoreTomorrow(d, windUnit, th) {
+function scoreTomorrow(d, windUnit, tempUnit, th) {
   const t = th || THRESHOLD_DEFAULTS;
   const hot = t.temp_hot, cold = t.temp_cold;
   let pts = 0;
-  const { temp_max: tmax, temp_min: tmin, uv, rain } = d;
+  const { temp_max: rawMax, temp_min: rawMin, uv, rain } = d;
+  const tmax = tempToC(rawMax, tempUnit);
+  const tmin = tempToC(rawMin, tempUnit);
   if (tmax != null && tmin != null) {
     pts += (tmax > hot || tmin < cold) ? 2 : (tmax > hot - 2 || tmin < cold + 3) ? 1 : 0;
     const range = tmax - tmin;
@@ -931,9 +985,9 @@ class MigraineRiskCard extends HTMLElement {
     this._fc = {};     // forecast store: 'eid|type' → {forecast, unsub, failed}
   }
 
-  disconnectedCallback() {
-    this._hist = {};   // drop cached history so re-created cards don't accumulate
-    for (const k of Object.keys(this._fc)) {
+  _clearDataCaches() {
+    this._hist = {};
+    for (const k of Object.keys(this._fc || {})) {
       const store = this._fc[k];
       if (store && store.timer) clearTimeout(store.timer);
       if (store && store.retry) clearTimeout(store.retry);
@@ -941,6 +995,10 @@ class MigraineRiskCard extends HTMLElement {
       if (u) { try { u(); } catch (e) { /* connection already closed */ } }
     }
     this._fc = {};
+  }
+
+  disconnectedCallback() {
+    this._clearDataCaches();
   }
 
   static async getConfigElement() {
@@ -975,7 +1033,7 @@ class MigraineRiskCard extends HTMLElement {
       entity_pressure_24h: 'pressure_drop_24h',
       entity_humidity: 'migraine_humidity',
       entity_temperature: 'migraine_temperature',
-      entity_temperature_change: 'temperature_change',
+      entity_temperature_change: 'migraine_temperature_change_6h',
       entity_wind_speed: 'migraine_wind',
       entity_uv_index: 'migraine_uv',
       entity_storm: 'thunderstorm',
@@ -989,8 +1047,15 @@ class MigraineRiskCard extends HTMLElement {
   }
 
   setConfig(config) {
-    // No required entities — card shows what's configured
-    this._config = { ...config };
+    // No required entities — card shows what's configured. If an editor change
+    // points the card at different data sources, dispose old forecast sockets
+    // and history so stale data cannot leak into the new configuration.
+    const previous = this._config;
+    const next = { ...config };
+    const sourceKeys = FACTOR_KEYS.map(k => FACTORS[k].configKey)
+      .concat(['entity_forecast', 'entity_risk_score', 'entity_risk_level']);
+    if (previous && sourceKeys.some(k => previous[k] !== next[k])) this._clearDataCaches();
+    this._config = next;
     if (this._hass) {
       this._lang = resolveLang(this._hass, this._config);
       loadTranslation(this._lang, this._config, () => { this._prevHash = ''; this._update(); });
@@ -1057,7 +1122,7 @@ class MigraineRiskCard extends HTMLElement {
       // state ("cloudy") often does not change when they do
       if (eid.startsWith('weather.') && e?.attributes) {
         const a = e.attributes;
-        s += ';' + (a.temperature ?? '') + ';' + (a.humidity ?? '') + ';' + (a.wind_speed ?? '') + ';' + (a.uv_index ?? '');
+        s += ';' + (a.temperature ?? '') + ';' + (a.humidity ?? '') + ';' + (a.pressure ?? '') + ';' + (a.wind_speed ?? '') + ';' + (a.uv_index ?? '') + ';' + (a.temperature_unit ?? '') + ';' + (a.pressure_unit ?? '') + ';' + (a.wind_speed_unit ?? '') + ';' + (a.supported_features ?? '');
       }
       s += '|';
     }
@@ -1093,19 +1158,22 @@ class MigraineRiskCard extends HTMLElement {
           const failed = series && series.failed;
           return { score: null, display: null, unit, pending: !failed, unavailable: !!failed };
         }
+        if (series.noData || series.points.length === 0) {
+          return { score: null, display: null, unit, unavailable: true };
+        }
         // series.ts is when the history was sampled; anchoring the window to it
         // keeps the result stable between renders instead of drifting with the clock
         const val = mode === 'pressure'
           ? computeDropFromPeak(series.points, hours, current, series.ts)
           : computeChange(series.points, hours, current, series.ts);
-        if (val == null) return { score: null, display: null, unit, pending: true };
+        if (val == null) return { score: null, display: null, unit, unavailable: true };
         return { score: Math.abs(val), display: Math.round(val * 10) / 10, unit };
       }
     }
     if (entity && key === 'thunderstorm' && entity.entity_id.startsWith('weather.')) {
       const fc = this._ensureForecast(entity.entity_id, 'hourly');
       if (fc && fc.length) {
-        const level = thunderLevelFromHourly(fc);
+        const level = thunderLevelFromHourly(fc, this._hass?.config?.time_zone);
         return { score: level, display: level, unit: '' };
       }
       // No forecast (yet) — fall through to current-condition detection
@@ -1155,12 +1223,12 @@ class MigraineRiskCard extends HTMLElement {
     const start = new Date(now - 25 * 3600e3).toISOString();
     const end = new Date(now).toISOString();
     this._hass.callApi('GET',
-      `history/period/${start}?end_time=${encodeURIComponent(end)}&filter_entity_id=${eid}`
+      `history/period/${start}?end_time=${encodeURIComponent(end)}&filter_entity_id=${encodeURIComponent(eid)}&significant_changes_only=0`
     ).then(res => {
       const arr = (res && res[0]) || [];
       const points = [];
       for (const s of arr) {
-        const t = new Date(s.last_changed || s.last_updated).getTime();
+        const t = new Date(s.last_updated || s.last_changed).getTime();
         if (isNaN(t)) continue;
         const at = s.attributes || {};
         let v;
@@ -1175,15 +1243,17 @@ class MigraineRiskCard extends HTMLElement {
         }
         if (v != null) points.push({ t, v });
       }
-      this._hist[key] = { ts: Date.now(), points, fetching: false };
+      this._hist[key] = { ts: Date.now(), points, fetching: false, noData: points.length === 0 };
       this._update();
     }).catch((err) => {
       // Keep stale points if we had them; retry after the cache window
+      const hasStale = !!(cached && cached.points && cached.points.length);
       this._hist[key] = {
         ts: Date.now(),
-        points: cached ? cached.points : null,
+        points: hasStale ? cached.points : null,
         fetching: false,
-        failed: !(cached && cached.points),
+        failed: !hasStale,
+        noData: !hasStale,
       };
       console.warn(`[migraine-risk-card] history for ${eid} (${mode}) failed: ${err && (err.message || err)}`);
       // Re-render: without this the tile stays on "…" until some unrelated
@@ -1286,7 +1356,7 @@ class MigraineRiskCard extends HTMLElement {
       if (s) s.fetching = false;
       // execute_script wraps the service response; shapes differ across HA
       // versions, so accept the documented one and the plain variants.
-      const resp = (res && (res.response || res.result)) || {};
+      const resp = (res && (res.response || res.result)) || res || {};
       const holder = resp[eid] || (resp.result && resp.result[eid]) || resp;
       const fc = (holder && holder.forecast) || null;
       if (fc && fc.length) this._forecastReceived(eid, type, fc);
@@ -1573,7 +1643,11 @@ class MigraineRiskCard extends HTMLElement {
       return;
     }
     const entity = this._hass.states[fid];
-    if (!entity) return;
+    if (!entity) {
+      const existing = card.querySelector('.forecast');
+      if (existing) existing.remove();
+      return;
+    }
 
     let bar = card.querySelector('.forecast');
     if (!bar) {
@@ -1641,6 +1715,7 @@ class MigraineRiskCard extends HTMLElement {
   // Tomorrow's risk computed in-card from a weather entity's forecast.
   _refreshForecastFromWeather(bar, entity) {
     const eid = entity.entity_id;
+    const timeZone = this._hass?.config?.time_zone;
     let data = null;
     let daily = null;
 
@@ -1651,7 +1726,7 @@ class MigraineRiskCard extends HTMLElement {
 
     if (canDaily) {
       daily = this._ensureForecast(eid, 'daily');
-      if (daily && daily.length) data = tomorrowFromForecast(daily, false);
+      if (daily && daily.length) data = tomorrowFromForecast(daily, false, timeZone);
     }
 
     const dailyStore = this._fc[eid + '|daily'];
@@ -1663,7 +1738,7 @@ class MigraineRiskCard extends HTMLElement {
     if (!data && dailyUnusable && canHourly) {
       // Aggregate tomorrow out of the hourly forecast instead
       const hourly = this._ensureForecast(eid, 'hourly');
-      if (hourly && hourly.length) data = tomorrowFromForecast(hourly, true);
+      if (hourly && hourly.length) data = tomorrowFromForecast(hourly, true, timeZone);
     }
 
     if (!data) {
@@ -1682,7 +1757,7 @@ class MigraineRiskCard extends HTMLElement {
     }
 
     const a = entity.attributes || {};
-    const pts = scoreTomorrow(data, a.wind_speed_unit, resolveThresholds(this._hass, this._config));
+    const pts = scoreTomorrow(data, a.wind_speed_unit, a.temperature_unit, resolveThresholds(this._hass, this._config));
     const level = tomorrowLevel(pts);
     const colour = riskColour(level);
     const fCard = bar.closest('.card');
@@ -2139,7 +2214,10 @@ class MigraineRiskCardEditor extends HTMLElement {
 
     const titleEl = document.createElement('div');
     titleEl.className = 'section-title';
-    titleEl.innerHTML = `<ha-icon icon="${icon}"></ha-icon> ${title}`;
+    const titleIcon = document.createElement('ha-icon');
+    titleIcon.setAttribute('icon', icon);
+    titleEl.appendChild(titleIcon);
+    titleEl.appendChild(document.createTextNode(' ' + title));
     section.appendChild(titleEl);
 
     if (hint) {
@@ -2193,13 +2271,19 @@ class MigraineRiskCardEditor extends HTMLElement {
 
 /* ─── Register ───────────────────────────────────────────────────── */
 
-customElements.define('migraine-risk-card', MigraineRiskCard);
-customElements.define('migraine-risk-card-editor', MigraineRiskCardEditor);
+if (!customElements.get('migraine-risk-card')) {
+  customElements.define('migraine-risk-card', MigraineRiskCard);
+}
+if (!customElements.get('migraine-risk-card-editor')) {
+  customElements.define('migraine-risk-card-editor', MigraineRiskCardEditor);
+}
 
 window.customCards = window.customCards || [];
-window.customCards.push({
-  type: 'migraine-risk-card',
-  name: 'Migraine Risk Card',
-  description: 'Science-backed migraine risk visualisation with real-time factor tracking and forecasting.',
-  preview: false,
-});
+if (!window.customCards.some(card => card.type === 'migraine-risk-card')) {
+  window.customCards.push({
+    type: 'migraine-risk-card',
+    name: 'Migraine Risk Card',
+    description: 'Science-backed migraine risk visualisation with real-time factor tracking and forecasting.',
+    preview: false,
+  });
+}
