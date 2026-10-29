@@ -67,7 +67,13 @@ assert(source.includes('s.last_updated || s.last_changed'), 'history must timest
 assert(source.includes("(a.pressure ?? '')"), 'weather pressure must participate in the state hash');
 const translationLoader = source.slice(source.indexOf('function loadTranslation'), source.indexOf('function dictFor'));
 assert(!translationLoader.includes('Promise.resolve().then(onLoad)'), 'cached translations must not schedule redundant renders');
-assert(source.includes("'sensor.migraine_temperature_change_6h', ['_rolling']"), 'stub config must prefer the public delta sensor over the rolling helper');
+const stubStart = source.indexOf('  static getStubConfig(');
+const stubEnd = source.indexOf('\n\n  setConfig(config) {', stubStart);
+const stubConfig = source.slice(stubStart, stubEnd);
+assert(stubConfig.includes("return { type: 'custom:migraine-risk-card' };"), 'new cards must start with an explicit-source stub');
+assert(!stubConfig.includes('Object.keys('), 'stub config must not enumerate Home Assistant entities');
+assert(!stubConfig.includes('const find ='), 'stub config must not guess source entities');
+assert(!stubConfig.includes('sensor.migraine_'), 'stub config must not silently opt into legacy package entities');
 assert(source.includes("if (!customElements.get('migraine-risk-card'))"), 'duplicate resource registration must be guarded');
 const editorStart = source.indexOf('class MigraineRiskCardEditor');
 const editorTranslation = source.slice(editorStart, source.indexOf('  _render() {', editorStart));

@@ -11,6 +11,7 @@ This release keeps the v3 scoring model unchanged and focuses on hidden correctn
 - Replaced endless history loading with a clear unavailable state when Recorder data is insufficient.
 - Hardened translation loading for multiple cards and transient failures.
 - Kept cached translation lookups render-neutral so normal Home Assistant state updates still use the card state-hash short-circuit.
+- New cards no longer auto-detect source or legacy sensor-package entities; source selection and package/integration mode are now explicit user choices.
 - Fixed a visual-editor render loop caused by translation callbacks being scheduled from every translated label lookup.
 - Switched the one-shot forecast fallback from admin-only `execute_script` to response-capable `call_service` (supported by the minimum HA 2024.6) and added long-term recovery retries.
 - Cleaned old history/forecast subscriptions when editor source entities change.

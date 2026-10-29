@@ -2,10 +2,9 @@
  * Migraine Risk Card
  * Home Assistant Custom Lovelace Card
  *
- * Works two ways:
- *   1. With the Migraine Risk custom integration (auto-detected)
- *   2. Standalone — point it at any weather entities and the card
- *      computes the risk score internally.
+ * Standalone by default — point it at the weather/sensor entities you choose
+ * and the card computes the risk score internally. Pre-computed package or
+ * integration entities remain available as an explicit opt-in.
  *
  * All factor entities are optional. The card only shows what you configure.
  *
@@ -1019,40 +1018,13 @@ class MigraineRiskCard extends HTMLElement {
     return document.createElement('migraine-risk-card-editor');
   }
 
-  static getStubConfig(hass) {
-    const ids = Object.keys(hass.states);
-    const find = (pattern, exact = '', exclude = []) => {
-      if (exact && ids.includes(exact)) return exact;
-      return ids.find(id => id.includes(pattern) && !exclude.some(x => id.includes(x))) || '';
-    };
-    const cfg = { type: 'custom:migraine-risk-card' };
-    // Prefer canonical package IDs, then fall back to a conservative substring
-    // match for renamed/legacy installations.
-    const rs = find('migraine_risk_score', 'sensor.migraine_risk_score');
-    if (rs) cfg.entity_risk_score = rs;
-    const rl = find('migraine_risk_level', 'sensor.migraine_risk_level');
-    if (rl) cfg.entity_risk_level = rl;
-    const fc = find('migraine_risk_forecast', 'sensor.migraine_risk_forecast_tomorrow');
-    if (fc) cfg.entity_forecast = fc;
-    // Factor entities. In particular, never pick the signed Statistics
-    // *_rolling helper instead of the public absolute 6h delta sensor.
-    const map = {
-      entity_pressure_6h: ['pressure_drop_6h', 'sensor.migraine_pressure_drop_6h'],
-      entity_pressure_24h: ['pressure_drop_24h', 'sensor.migraine_pressure_drop_24h'],
-      entity_humidity: ['migraine_humidity', 'sensor.migraine_humidity'],
-      entity_temperature: ['migraine_temperature', 'sensor.migraine_temperature', ['temperature_change_6h']],
-      entity_temperature_change: ['migraine_temperature_change_6h', 'sensor.migraine_temperature_change_6h', ['_rolling']],
-      entity_wind_speed: ['migraine_wind', 'sensor.migraine_wind_speed'],
-      entity_uv_index: ['migraine_uv', 'sensor.migraine_uv_index'],
-      entity_storm: ['thunderstorm', ''],
-      entity_air_quality: ['waqi_aqi', ''],
-    };
-    for (const [key, spec] of Object.entries(map)) {
-      const [pattern, exact, exclude = []] = spec;
-      const e = find(pattern, exact, exclude);
-      if (e) cfg[key] = e;
-    }
-    return cfg;
+  static getStubConfig() {
+    // v3.x is standalone-first. Do not guess a user's weather provider,
+    // location, sensor choice, or legacy-package mode from existing entities.
+    // Integration/package entities remain available through explicit editor
+    // configuration, preserving existing cards without silently opting new
+    // cards into a legacy backend.
+    return { type: 'custom:migraine-risk-card' };
   }
 
   setConfig(config) {
