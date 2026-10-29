@@ -1,0 +1,49 @@
+name: Finalize 3.4.0 reliability patch
+
+on:
+  push:
+    branches:
+      - release/3.4.0-quality-reliability
+    paths:
+      - .github/workflows/finalize-3.4.0.yml
+
+permissions:
+  contents: write
+
+jobs:
+  finalize:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout release branch
+        uses: actions/checkout@v4
+        with:
+          ref: release/3.4.0-quality-reliability
+          fetch-depth: 0
+
+      - name: Apply final reliability patch
+        run: python3 scripts/finalize_3_4_0.py
+
+      - name: Syntax check
+        run: node --check src/migraine-risk-card.js
+
+      - name: Unit and regression tests
+        run: node tests/test-core.js
+
+      - name: Verify release artifact sync
+        run: diff -u src/migraine-risk-card.js dist/migraine-risk-card.js
+
+      - name: Restore temporary preparation files
+        run: |
+          git checkout HEAD -- scripts/finalize_3_4_0.py
+          git checkout HEAD -- .github/workflows/finalize-3.4.0.yml
+
+      - name: Check whitespace
+        run: git diff --check
+
+      - name: Commit final reliability fixes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Harden forecast fallback and package availability"
+          git push origin HEAD:release/3.4.0-quality-reliability
