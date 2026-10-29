@@ -67,6 +67,11 @@ assert(source.includes('s.last_updated || s.last_changed'), 'history must timest
 assert(source.includes("(a.pressure ?? '')"), 'weather pressure must participate in the state hash');
 assert(source.includes("entity_temperature_change: 'migraine_temperature_change_6h'"), 'stub config must prefer the delta sensor');
 assert(source.includes("if (!customElements.get('migraine-risk-card'))"), 'duplicate resource registration must be guarded');
+const editorStart = source.indexOf('class MigraineRiskCardEditor');
+const editorTranslation = source.slice(editorStart, source.indexOf('  _render() {', editorStart));
+const editorLookup = editorTranslation.slice(editorTranslation.indexOf('  _t(path, fallback)'));
+assert(!editorLookup.includes('loadTranslation('), 'editor translation lookup must be side-effect free');
+assert(editorTranslation.includes('_requestTranslation()'), 'editor must request translations outside render lookups');
 assert(source.includes("type: 'call_service'"), 'forecast fallback must use non-admin websocket call_service');
 assert(!source.includes("type: 'execute_script'"), 'forecast fallback must not require admin-only execute_script');
 assert(source.includes('FORECAST_RECOVERY_MS'), 'forecast failures must retain a long-term recovery path');

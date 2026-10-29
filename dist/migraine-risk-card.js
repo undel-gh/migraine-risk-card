@@ -1793,11 +1793,13 @@ class MigraineRiskCardEditor extends HTMLElement {
     this.attachShadow({ mode: 'open' });
     this._config = {};
     this._rendered = false;
+    this._translationRequestKey = null;
   }
 
   set hass(hass) {
     const firstHass = !this._hass;
     this._hass = hass;
+    this._requestTranslation();
     if (this._rendered) {
       if (firstHass) {
         // Language comes from hass — re-render once it is known
@@ -1812,13 +1814,26 @@ class MigraineRiskCardEditor extends HTMLElement {
 
   setConfig(config) {
     this._config = { ...config };
+    this._requestTranslation();
     this._render();
   }
 
-  _t(path, fallback) {
+  _requestTranslation() {
     const lang = resolveLang(this._hass, this._config);
-    loadTranslation(lang, this._config, () => { if (this._rendered) this._render(); });
-    return tr(lang, path, fallback);
+    const key = lang + '|' + (this._config.translations_path || '');
+    if (this._translationRequestKey === key) return;
+    this._translationRequestKey = key;
+    loadTranslation(lang, this._config, () => {
+      // Translation loading is asynchronous, but rendering itself must stay
+      // side-effect-free. In particular, _t() is called dozens of times per
+      // render; scheduling another render from there creates an infinite
+      // microtask loop once a dictionary is already cached.
+      if (this._translationRequestKey === key && this._rendered) this._render();
+    });
+  }
+
+  _t(path, fallback) {
+    return tr(resolveLang(this._hass, this._config), path, fallback);
   }
 
   _render() {
