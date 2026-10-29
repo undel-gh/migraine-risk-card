@@ -1,5 +1,6 @@
 name: Apply explicit-source stub fix
 
+# One-shot release-branch helper; removed after the validated patch lands.
 on:
   push:
     branches:
