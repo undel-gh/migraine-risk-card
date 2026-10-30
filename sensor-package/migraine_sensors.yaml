@@ -147,8 +147,10 @@ input_text:
 
 
 ###############################################################################
-# INPUT HELPERS — pressure & temperature tracking state
-# (These are managed automatically by the automations below)
+# INPUT HELPERS — calibration plus legacy tracking state
+# pressure_*_peak/reset_time and temperature_6h_baseline/reset_time are retained
+# for 1.x/2.x compatibility only. v3.4 rolling calculations do not read or
+# update them; they are candidates for removal in a future major release.
 ###############################################################################
 
 input_boolean:
@@ -362,7 +364,7 @@ input_number:
 
   pressure_6h_peak:
     name: "6h Pressure Peak"
-    min: 900
+    min: 300
     max: 1100
     step: 0.1
     unit_of_measurement: "hPa"
@@ -370,7 +372,7 @@ input_number:
 
   pressure_24h_peak:
     name: "24h Pressure Peak"
-    min: 900
+    min: 300
     max: 1100
     step: 0.1
     unit_of_measurement: "hPa"
@@ -393,8 +395,8 @@ input_number:
   temperature_6h_baseline:
     name: "6h Temperature Baseline"
     icon: mdi:thermometer-lines
-    min: -20
-    max: 60
+    min: -60
+    max: 70
     step: 0.1
     unit_of_measurement: "°C"
     mode: box
@@ -405,6 +407,45 @@ input_number:
     max: 9999999999
     step: 1
     mode: box
+
+
+###############################################################################
+# ROLLING-WINDOW STATISTICS
+# v3.4 replaces the old 6h/24h reset automations with true max_age windows.
+# The statistics integration restores its buffer from Recorder on startup.
+# Without Recorder history, a restored window initially covers only samples
+# collected since startup until the configured max_age has elapsed.
+# The *_rolling sensors are internal helpers; consume the public template delta
+# sensors below for scoring/card mappings.
+###############################################################################
+
+sensor:
+  - platform: statistics
+    name: "Migraine Pressure Peak 6h Rolling"
+    unique_id: migraine_pressure_peak_6h_rolling
+    entity_id: sensor.migraine_pressure_hpa
+    state_characteristic: value_max
+    max_age:
+      hours: 6
+    precision: 2
+
+  - platform: statistics
+    name: "Migraine Pressure Peak 24h Rolling"
+    unique_id: migraine_pressure_peak_24h_rolling
+    entity_id: sensor.migraine_pressure_hpa
+    state_characteristic: value_max
+    max_age:
+      hours: 24
+    precision: 2
+
+  - platform: statistics
+    name: "Migraine Temperature Change 6h Rolling"
+    unique_id: migraine_temperature_change_6h_rolling
+    entity_id: sensor.migraine_temperature
+    state_characteristic: change
+    max_age:
+      hours: 6
+    precision: 2
 
 
 ###############################################################################
@@ -426,8 +467,9 @@ template:
           {% set temp_entity = states('input_text.migraine_source_temperature') %}
           {% macro to_celsius(v, source_entity=None) %}
             {% set f = v | float(0) %}
-            {% set unit = state_attr(source_entity, 'unit_of_measurement') if source_entity else None %}
-            {% if unit in ['°F','F','fahrenheit'] or (unit is none and f > 50) %}
+            {% set unit = state_attr(source_entity, 'unit_of_measurement') if source_entity else state_attr(weather_entity, 'temperature_unit') %}
+            {% set u = unit | string | lower if unit is not none else '' %}
+            {% if u in ['°f','f','fahrenheit'] %}
               {{ ((f - 32) * 5 / 9) | round(2) }}
             {% else %}
               {{ f }}
@@ -474,15 +516,36 @@ template:
 
       - name: "Migraine Pressure (hPa)"
         unique_id: migraine_pressure_hpa
+        availability: >
+          {% set weather_entity = states('input_text.migraine_source_weather') %}
+          {% set pres_entity = states('input_text.migraine_source_pressure') %}
+          {% set direct_ok = pres_entity not in ['not_configured','unknown','unavailable','',none]
+             and states(pres_entity) not in ['unknown','unavailable','',none]
+             and states(pres_entity) | float(none) is not none %}
+          {% set weather_ok = weather_entity not in ['not_configured','unknown','unavailable','',none]
+             and state_attr(weather_entity, 'pressure') is number %}
+          {{ direct_ok or weather_ok }}
         state: >
           {% set weather_entity = states('input_text.migraine_source_weather') %}
           {% set pres_entity = states('input_text.migraine_source_pressure') %}
-          {% macro to_hpa(v) %}
+          {% macro to_hpa(v, source_entity=None) %}
             {% set f = v | float(0) %}
-            {% if f >= 25 and f <= 33 %}
+            {% set unit = state_attr(source_entity, 'unit_of_measurement') if source_entity else state_attr(weather_entity, 'pressure_unit') %}
+            {% set u = unit | string | lower | replace(' ', '') if unit is not none else '' %}
+            {% if u in ['inhg'] %}
               {{ (f * 33.8639) | round(2) }}
-            {% elif f >= 600 and f <= 825 %}
+            {% elif u in ['mmhg','ммрт.ст.','ммртст'] %}
               {{ (f * 1.33322) | round(2) }}
+            {% elif u in ['kpa','кпа'] %}
+              {{ (f * 10) | round(2) }}
+            {% elif u == 'psi' %}
+              {{ (f * 68.9476) | round(2) }}
+            {% elif not u and f >= 25 and f <= 33 %}
+              {{ (f * 33.8639) | round(2) }}
+            {% elif not u and f >= 600 and f <= 825 %}
+              {{ (f * 1.33322) | round(2) }}
+            {% elif not u and f >= 80 and f <= 120 %}
+              {{ (f * 10) | round(2) }}
             {% else %}
               {{ f }}
             {% endif %}
@@ -490,7 +553,7 @@ template:
           {% if pres_entity not in ['not_configured','unknown','unavailable','',none] %}
             {% set v = states(pres_entity) %}
             {% if v not in ['unknown','unavailable','',none] and v | float(0) > 0 %}
-              {{ to_hpa(v) | trim }}
+              {{ to_hpa(v, pres_entity) | trim }}
             {% elif weather_entity not in ['not_configured','unknown','unavailable','',none] %}
               {% set wa = state_attr(weather_entity, 'pressure') %}
               {{ to_hpa(wa) | trim if wa is number else 0 }}
@@ -622,38 +685,38 @@ template:
       - name: Migraine Pressure Drop (6h)
         unique_id: migraine_pressure_drop_6h
         unit_of_measurement: "hPa"
-        device_class: pressure
         state_class: measurement
         availability: >
           {{ states('sensor.migraine_pressure_hpa') not in ['unknown','unavailable','',none]
-             and states('sensor.migraine_pressure_hpa') | float(0) > 900 }}
+             and states('sensor.migraine_pressure_hpa') | float(0) > 300
+             and states('sensor.migraine_pressure_peak_6h_rolling') not in ['unknown','unavailable','',none] }}
         state: >
           {% set current = states('sensor.migraine_pressure_hpa') | float(0) %}
-          {% set peak_6h = states('input_number.pressure_6h_peak') | float(0) %}
+          {% set peak_6h = states('sensor.migraine_pressure_peak_6h_rolling') | float(0) %}
           {% set drop = peak_6h - current %}
           {{ [drop, 0] | max | round(1) }}
         icon: mdi:trending-down
         attributes:
           current_pressure: "{{ states('sensor.migraine_pressure_hpa') }}"
-          peak_pressure_6h: "{{ states('input_number.pressure_6h_peak') }}"
+          peak_pressure_6h: "{{ states('sensor.migraine_pressure_peak_6h_rolling') }}"
 
       - name: Migraine Pressure Drop (24h)
         unique_id: migraine_pressure_drop_24h
         unit_of_measurement: "hPa"
-        device_class: pressure
         state_class: measurement
         availability: >
           {{ states('sensor.migraine_pressure_hpa') not in ['unknown','unavailable','',none]
-             and states('sensor.migraine_pressure_hpa') | float(0) > 900 }}
+             and states('sensor.migraine_pressure_hpa') | float(0) > 300
+             and states('sensor.migraine_pressure_peak_24h_rolling') not in ['unknown','unavailable','',none] }}
         state: >
           {% set current = states('sensor.migraine_pressure_hpa') | float(0) %}
-          {% set peak_24h = states('input_number.pressure_24h_peak') | float(0) %}
+          {% set peak_24h = states('sensor.migraine_pressure_peak_24h_rolling') | float(0) %}
           {% set drop = peak_24h - current %}
           {{ [drop, 0] | max | round(1) }}
         icon: mdi:trending-down
         attributes:
           current_pressure: "{{ states('sensor.migraine_pressure_hpa') }}"
-          peak_pressure_24h: "{{ states('input_number.pressure_24h_peak') }}"
+          peak_pressure_24h: "{{ states('sensor.migraine_pressure_peak_24h_rolling') }}"
 
       # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
       # TEMPERATURE CHANGE TRACKING
@@ -662,25 +725,21 @@ template:
       - name: "Migraine Temperature Change (6h)"
         unique_id: migraine_temperature_change_6h
         unit_of_measurement: "°C"
-        device_class: temperature
         state_class: measurement
         availability: >
           {{ states('sensor.migraine_temperature') not in ['unknown','unavailable','',none]
-             and states('input_number.temperature_6h_reset_time') | int(0) != 0 }}
+             and states('sensor.migraine_temperature_change_6h_rolling') not in ['unknown','unavailable','',none] }}
         state: >
-          {% set current = states('sensor.migraine_temperature') | float(0) %}
-          {% set baseline = states('input_number.temperature_6h_baseline') | float(0) %}
-          {{ (current - baseline) | abs | round(1) }}
+          {{ states('sensor.migraine_temperature_change_6h_rolling') | float(0) | abs | round(1) }}
         icon: mdi:thermometer-chevron-up
         attributes:
           current_temp: "{{ states('sensor.migraine_temperature') }}"
-          baseline_temp_6h: "{{ states('input_number.temperature_6h_baseline') }}"
+          signed_change_6h: "{{ states('sensor.migraine_temperature_change_6h_rolling') }}"
           direction: >
-            {% set current = states('sensor.migraine_temperature') | float(0) %}
-            {% set baseline = states('input_number.temperature_6h_baseline') | float(0) %}
-            {% if current > baseline + 0.5 %}
+            {% set change = states('sensor.migraine_temperature_change_6h_rolling') | float(0) %}
+            {% if change > 0.5 %}
               Rising
-            {% elif current < baseline - 0.5 %}
+            {% elif change < -0.5 %}
               Falling
             {% else %}
               Stable
@@ -808,7 +867,9 @@ template:
         unique_id: migraine_risk_score
         unit_of_measurement: "pts"
         availability: >
-          {{ states('sensor.migraine_pressure_hpa') not in ['unknown','unavailable','',none] }}
+          {{ states('sensor.migraine_pressure_hpa') not in ['unknown','unavailable','',none]
+             and states('sensor.migraine_pressure_drop_6h') not in ['unknown','unavailable','',none]
+             and states('sensor.migraine_pressure_drop_24h') not in ['unknown','unavailable','',none] }}
         state: >
           {% set d6 = states('sensor.migraine_pressure_drop_6h') | float(0) %}
           {% set d24 = states('sensor.migraine_pressure_drop_24h') | float(0) %}
@@ -854,6 +915,8 @@ template:
 
       - name: Migraine Risk Level
         unique_id: migraine_risk_level
+        availability: >
+          {{ states('sensor.migraine_risk_score') not in ['unknown','unavailable','',none] }}
         state: >
           {% set s = states('sensor.migraine_risk_score') | int(0) %}
           {% if s >= 12 %}
@@ -906,8 +969,12 @@ template:
           {% set uv_entity = states('input_text.migraine_source_forecast_uv') %}
           {% set fc_entity = states('input_text.migraine_source_forecast_text') %}
           {% set rain_entity = states('input_text.migraine_source_forecast_rain_chance') %}
-          {% set helper_tmax = states(tmax_entity) | float(none) if tmax_entity not in ['not_configured','unknown','unavailable','',none] else none %}
-          {% set helper_tmin = states(tmin_entity) | float(none) if tmin_entity not in ['not_configured','unknown','unavailable','',none] else none %}
+          {% set helper_tmax_raw = states(tmax_entity) | float(none) if tmax_entity not in ['not_configured','unknown','unavailable','',none] else none %}
+          {% set helper_tmin_raw = states(tmin_entity) | float(none) if tmin_entity not in ['not_configured','unknown','unavailable','',none] else none %}
+          {% set tmax_unit = state_attr(tmax_entity, 'unit_of_measurement') | lower if tmax_entity not in ['not_configured','unknown','unavailable','',none] and state_attr(tmax_entity, 'unit_of_measurement') is not none else '' %}
+          {% set tmin_unit = state_attr(tmin_entity, 'unit_of_measurement') | lower if tmin_entity not in ['not_configured','unknown','unavailable','',none] and state_attr(tmin_entity, 'unit_of_measurement') is not none else '' %}
+          {% set helper_tmax = ((helper_tmax_raw - 32) * 5 / 9) if helper_tmax_raw is not none and tmax_unit in ['°f','f','fahrenheit'] else helper_tmax_raw %}
+          {% set helper_tmin = ((helper_tmin_raw - 32) * 5 / 9) if helper_tmin_raw is not none and tmin_unit in ['°f','f','fahrenheit'] else helper_tmin_raw %}
           {% set helper_uv = states(uv_entity) | float(none) if uv_entity not in ['not_configured','unknown','unavailable','',none] else none %}
           {% set helper_rain = states(rain_entity) | float(none) if rain_entity not in ['not_configured','unknown','unavailable','',none] else none %}
           {% set tmax = fd_tmax | float(none) if fd_tmax is not none else helper_tmax %}
@@ -1095,6 +1162,27 @@ template:
               {% endif %}
             {% endfor %}
             {{ ns.e }}
+          # Temperatures normalised to °C for scoring and package attributes
+          tomorrow_temp_max_c: >
+            {% set v = tomorrow_entry.get('temperature') %}
+            {% set u = state_attr(weather_entity, 'temperature_unit') | default('°C', true) | lower %}
+            {% if v is none %}
+              {{ none }}
+            {% elif u in ['°f','f','fahrenheit'] %}
+              {{ (((v | float(0)) - 32) * 5 / 9) | round(2) }}
+            {% else %}
+              {{ v | float(0) }}
+            {% endif %}
+          tomorrow_temp_min_c: >
+            {% set v = tomorrow_entry.get('templow') %}
+            {% set u = state_attr(weather_entity, 'temperature_unit') | default('°C', true) | lower %}
+            {% if v is none %}
+              {{ none }}
+            {% elif u in ['°f','f','fahrenheit'] %}
+              {{ (((v | float(0)) - 32) * 5 / 9) | round(2) }}
+            {% else %}
+              {{ v | float(0) }}
+            {% endif %}
           # Wind normalised to km/h for scoring
           tomorrow_wind_kmh: >
             {% set v = tomorrow_entry.get('wind_speed') %}
@@ -1106,6 +1194,8 @@ template:
                 {{ (v | float(0)) * 3.6 }}
               {% elif 'mph' in u %}
                 {{ (v | float(0)) * 1.60934 }}
+              {% elif u in ['kn','kt','knots'] %}
+                {{ (v | float(0)) * 1.852 }}
               {% else %}
                 {{ v | float(0) }}
               {% endif %}
@@ -1169,8 +1259,8 @@ template:
         state: "{{ tomorrow_entry.get('condition', 'unknown') }}"
         icon: mdi:calendar-clock
         attributes:
-          temp_max: "{{ tomorrow_entry.get('temperature') }}"
-          temp_min: "{{ tomorrow_entry.get('templow') }}"
+          temp_max: "{{ tomorrow_temp_max_c }}"
+          temp_min: "{{ tomorrow_temp_min_c }}"
           uv_index: "{{ tomorrow_entry.get('uv_index') }}"
           rain_chance: "{{ tomorrow_entry.get('precipitation_probability') }}"
           humidity: "{{ tomorrow_entry.get('humidity') }}"
@@ -1188,7 +1278,7 @@ template:
         unique_id: migraine_lightning_alert
         state: >
           {{ is_state('input_boolean.migraine_badge_override','on')
-             or states('sensor.migraine_factor_thunderstorm_nearby') | int >= 2 }}
+             or states('sensor.migraine_factor_thunderstorm_nearby') | int(0) >= 2 }}
         device_class: problem
         icon: >
           {% if is_state(this.entity_id,'on') %}
@@ -1200,7 +1290,8 @@ template:
       - name: Migraine Risk Warning
         unique_id: migraine_risk_warning
         device_class: problem
-        state: "{{ states('sensor.migraine_risk_score') | int >= 8 }}"
+        availability: "{{ states('sensor.migraine_risk_score') not in ['unknown','unavailable','',none] }}"
+        state: "{{ states('sensor.migraine_risk_score') | int(0) >= 8 }}"
         icon: >
           {% if is_state(this.entity_id,'on') %}mdi:alert{% else %}mdi:check{% endif %}
 
@@ -1234,112 +1325,8 @@ template:
 
 
 ###############################################################################
-# AUTOMATIONS — Pressure & Temperature Baseline Tracking
-# These run automatically to maintain the rolling peak/baseline values.
+# v3.4 NOTE — legacy tracking helpers
+# pressure_*_peak/reset_time and temperature_6h_* helpers above are retained
+# for backward compatibility only. Rolling calculations now use Statistics
+# sensors and require no reset automation.
 ###############################################################################
-
-automation:
-  - id: migraine_track_pressure_peaks
-    alias: "Migraine: Track Pressure Peaks"
-    description: "Tracks pressure peaks over 6h and 24h rolling windows for migraine drop detection"
-    trigger:
-      - platform: time_pattern
-        minutes: "/10"
-    condition:
-      - condition: template
-        value_template: >
-          {{ states('sensor.migraine_pressure_hpa') not in ['unknown','unavailable','',none]
-             and states('sensor.migraine_pressure_hpa') | float(0) > 900 }}
-    action:
-      - variables:
-          current_pressure: "{{ states('sensor.migraine_pressure_hpa') | float(0) }}"
-          current_time: "{{ as_timestamp(now()) }}"
-          peak_6h: "{{ states('input_number.pressure_6h_peak') | float(0) }}"
-          reset_time_6h: "{{ states('input_number.pressure_6h_reset_time') | int(0) }}"
-          hours_since_reset_6h: "{{ (as_timestamp(now()) - (states('input_number.pressure_6h_reset_time') | int(0))) / 3600 }}"
-          peak_24h: "{{ states('input_number.pressure_24h_peak') | float(0) }}"
-          reset_time_24h: "{{ states('input_number.pressure_24h_reset_time') | int(0) }}"
-          hours_since_reset_24h: "{{ (as_timestamp(now()) - (states('input_number.pressure_24h_reset_time') | int(0))) / 3600 }}"
-      # 6-hour window
-      - choose:
-          - conditions:
-              - condition: template
-                value_template: "{{ hours_since_reset_6h >= 6 or reset_time_6h == 0 }}"
-            sequence:
-              - service: input_number.set_value
-                target:
-                  entity_id: input_number.pressure_6h_peak
-                data:
-                  value: "{{ current_pressure }}"
-              - service: input_number.set_value
-                target:
-                  entity_id: input_number.pressure_6h_reset_time
-                data:
-                  value: "{{ current_time }}"
-          - conditions:
-              - condition: template
-                value_template: "{{ current_pressure > peak_6h }}"
-            sequence:
-              - service: input_number.set_value
-                target:
-                  entity_id: input_number.pressure_6h_peak
-                data:
-                  value: "{{ current_pressure }}"
-      # 24-hour window
-      - choose:
-          - conditions:
-              - condition: template
-                value_template: "{{ hours_since_reset_24h >= 24 or reset_time_24h == 0 }}"
-            sequence:
-              - service: input_number.set_value
-                target:
-                  entity_id: input_number.pressure_24h_peak
-                data:
-                  value: "{{ current_pressure }}"
-              - service: input_number.set_value
-                target:
-                  entity_id: input_number.pressure_24h_reset_time
-                data:
-                  value: "{{ current_time }}"
-          - conditions:
-              - condition: template
-                value_template: "{{ current_pressure > peak_24h }}"
-            sequence:
-              - service: input_number.set_value
-                target:
-                  entity_id: input_number.pressure_24h_peak
-                data:
-                  value: "{{ current_pressure }}"
-
-  - id: migraine_track_temperature_baseline
-    alias: "Migraine: Track Temperature Baseline"
-    description: "Records temperature baseline every 6 hours for rapid change detection"
-    trigger:
-      - platform: time_pattern
-        minutes: "/10"
-    condition:
-      - condition: template
-        value_template: >
-          {{ states('sensor.migraine_temperature') not in ['unknown','unavailable','',none] }}
-    action:
-      - variables:
-          current_temp: "{{ states('sensor.migraine_temperature') | float(0) }}"
-          current_time: "{{ as_timestamp(now()) }}"
-          reset_time: "{{ states('input_number.temperature_6h_reset_time') | int(0) }}"
-          hours_since_reset: "{{ (as_timestamp(now()) - (states('input_number.temperature_6h_reset_time') | int(0))) / 3600 }}"
-      - choose:
-          - conditions:
-              - condition: template
-                value_template: "{{ hours_since_reset >= 6 or reset_time == 0 }}"
-            sequence:
-              - service: input_number.set_value
-                target:
-                  entity_id: input_number.temperature_6h_baseline
-                data:
-                  value: "{{ current_temp }}"
-              - service: input_number.set_value
-                target:
-                  entity_id: input_number.temperature_6h_reset_time
-                data:
-                  value: "{{ current_time }}"
-    mode: single

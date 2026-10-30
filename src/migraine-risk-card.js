@@ -2,20 +2,19 @@
  * Migraine Risk Card
  * Home Assistant Custom Lovelace Card
  *
- * Works two ways:
- *   1. With the Migraine Risk custom integration (auto-detected)
- *   2. Standalone — point it at any weather entities and the card
- *      computes the risk score internally.
+ * Standalone by default — point it at the weather/sensor entities you choose
+ * and the card computes the risk score internally. Pre-computed package or
+ * integration entities remain available as an explicit opt-in.
  *
  * All factor entities are optional. The card only shows what you configure.
  *
- * Installation: Copy to /config/www/migraine-risk-card.js
- * Add resource: /local/migraine-risk-card.js (JavaScript Module)
+ * Installation: HACS is recommended. Manual installs must copy the full dist/
+ * directory (card + translations) and register dist/migraine-risk-card.js.
  *
  * © 2026 — MIT Licence
  */
 
-const CARD_VERSION = '3.3.3';
+const CARD_VERSION = '3.4.0';
 
 /* ─── Calibration (personal threshold overrides) ─────────────────────
  * Priority: card config `thresholds:` → input_number helpers → defaults.
@@ -236,27 +235,54 @@ const TRANSLATION_PATHS = [
 
 // lang → dictionary | 'loading' | 'failed'
 const LOADED_TRANSLATIONS = {};
+const TRANSLATION_WAITERS = {};
+const TRANSLATION_FAILED_AT = {};
+const TRANSLATION_RETRY_MS = 5 * 60e3;
 
 function translationBases(config) {
   const custom = config && config.translations_path;
   return custom ? [custom.replace(/\/?$/, '/')] : TRANSLATION_PATHS;
 }
 
-// Fetches a language file once; calls onLoad when it becomes available.
+function flushTranslationWaiters(lang) {
+  const waiters = TRANSLATION_WAITERS[lang] || [];
+  delete TRANSLATION_WAITERS[lang];
+  waiters.forEach(cb => {
+    try { cb(); }
+    catch (e) { console.warn(`[migraine-risk-card] translation callback for ${lang} failed`, e); }
+  });
+}
+
+// Fetch a language once, fan the result out to every card waiting for it, and
+// allow a later retry after a transient HTTP/network failure.
 function loadTranslation(lang, config, onLoad) {
-  if (!lang || LOADED_TRANSLATIONS[lang]) return;
+  if (!lang) return;
+  const state = LOADED_TRANSLATIONS[lang];
+  // A cached dictionary is already visible to tr() synchronously. Do not fire
+  // onLoad again: set hass() calls this on every HA state update, and doing so
+  // would defeat the card's state-hash short-circuit and force a second render.
+  if (state && state !== 'loading' && state !== 'failed') return;
+  // A failed load has already flushed the original waiters so they could render
+  // the built-in English fallback. Stay quiet until the retry window expires.
+  if (state === 'failed' && Date.now() - (TRANSLATION_FAILED_AT[lang] || 0) < TRANSLATION_RETRY_MS) return;
+  if (onLoad) (TRANSLATION_WAITERS[lang] ||= []).push(onLoad);
+  if (state === 'loading') return;
+
   LOADED_TRANSLATIONS[lang] = 'loading';
   const bases = translationBases(config);
   const attempt = (i) => {
     if (i >= bases.length) {
       LOADED_TRANSLATIONS[lang] = 'failed';
+      TRANSLATION_FAILED_AT[lang] = Date.now();
+      flushTranslationWaiters(lang);
       return;
     }
     fetch(bases[i] + lang + '.json', { cache: 'no-cache' })
       .then(r => (r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status))))
       .then(dict => {
         LOADED_TRANSLATIONS[lang] = dict;
-        if (onLoad) onLoad();
+        delete TRANSLATION_FAILED_AT[lang];
+        flushTranslationWaiters(lang);
       })
       .catch(() => attempt(i + 1));
   };
@@ -312,7 +338,7 @@ function windToKmh(v, unit) {
   switch (String(unit || '').toLowerCase()) {
     case 'm/s': case 'm/с': case 'м/с': return v * 3.6;
     case 'mph': return v * 1.60934;
-    case 'kn': case 'knots': return v * 1.852;
+    case 'kn': case 'kt': case 'knots': return v * 1.852;
     default: return v; // km/h
   }
 }
@@ -358,7 +384,7 @@ function extractFactorValue(entity, key, def) {
   // weather.* entity: read from attributes
   if (key === 'thunderstorm') {
     const cond = String(entity.state || '');
-    const v = cond.startsWith('lightning') ? 2 : 0;
+    const v = THUNDER_CONDITIONS.includes(cond) ? 2 : 0;
     return { score: v, display: v, unit: '' };
   }
 
@@ -390,13 +416,41 @@ const FEATURE_FORECAST_HOURLY = 2;
 // A subscription for an unsupported forecast type can be accepted and then
 // stay silent forever, so give up waiting after this long and try the other type.
 const FORECAST_TIMEOUT_MS = 8000;
-const FORECAST_RETRY_MS = 60000;   // a failed forecast is retried, not abandoned
+const FORECAST_RETRY_MS = 60000;   // quick retries for transient failures
+const FORECAST_RECOVERY_MS = 15 * 60e3; // keep self-healing after the quick retry budget
 const FORECAST_MAX_TRIES = 5;
 
 function supportsForecast(entity, type) {
   const f = entity && entity.attributes && entity.attributes.supported_features;
   if (typeof f !== 'number') return true; // unknown → try anyway
   return type === 'daily' ? !!(f & FEATURE_FORECAST_DAILY) : !!(f & FEATURE_FORECAST_HOURLY);
+}
+
+function dateKeyInTimeZone(value, timeZone) {
+  const d = value instanceof Date ? value : new Date(value);
+  if (isNaN(d.getTime())) return null;
+  if (!timeZone) return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone, year: 'numeric', month: '2-digit', day: '2-digit',
+  }).formatToParts(d);
+  const get = (type) => parts.find(p => p.type === type)?.value;
+  return `${get('year')}-${get('month')}-${get('day')}`;
+}
+
+function tomorrowDateKey(timeZone, nowMs) {
+  const today = dateKeyInTimeZone(nowMs == null ? Date.now() : nowMs, timeZone);
+  if (!today) return null;
+  const [y, m, d] = today.split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1, d + 1)).toISOString().slice(0, 10);
+}
+
+function hourInTimeZone(value, timeZone) {
+  const d = value instanceof Date ? value : new Date(value);
+  if (isNaN(d.getTime())) return null;
+  if (!timeZone) return d.getHours();
+  const hour = new Intl.DateTimeFormat('en-US', { timeZone, hour: '2-digit', hourCycle: 'h23' })
+    .formatToParts(d).find(p => p.type === 'hour')?.value;
+  return hour == null ? null : Number(hour);
 }
 
 // Drop from the highest value within the last `hours` (matches the sensor
@@ -430,9 +484,9 @@ function computeChange(points, hours, current, sampledAt) {
 }
 
 // 2 = thunderstorm within the next 3 hours, 1 = later today, 0 = none.
-function thunderLevelFromHourly(forecast) {
+function thunderLevelFromHourly(forecast, timeZone) {
   const now = Date.now();
-  const todayStr = new Date().toDateString();
+  const todayStr = dateKeyInTimeZone(Date.now(), timeZone);
   let next3 = false;
   let today = false;
   for (const f of forecast || []) {
@@ -440,18 +494,18 @@ function thunderLevelFromHourly(forecast) {
     const t = new Date(f.datetime).getTime();
     if (isNaN(t)) continue;
     if (t >= now - 3600e3 && t <= now + 3 * 3600e3) next3 = true;
-    if (new Date(f.datetime).toDateString() === todayStr) today = true;
+    if (dateKeyInTimeZone(f.datetime, timeZone) === todayStr) today = true;
   }
   return next3 ? 2 : today ? 1 : 0;
 }
 
 // Extract tomorrow's data from a daily forecast, or aggregate hourly entries.
-function tomorrowFromForecast(forecast, isHourly) {
-  const tomorrow = new Date(Date.now() + 24 * 3600e3).toDateString();
+function tomorrowFromForecast(forecast, isHourly, timeZone) {
+  const tomorrow = tomorrowDateKey(timeZone);
   const entries = (forecast || []).filter(f => {
     if (!f || !f.datetime) return false;
     const d = new Date(f.datetime);
-    return !isNaN(d.getTime()) && d.toDateString() === tomorrow;
+    return !isNaN(d.getTime()) && dateKeyInTimeZone(d, timeZone) === tomorrow;
   });
   if (!entries.length) return null;
   if (!isHourly) {
@@ -472,8 +526,8 @@ function tomorrowFromForecast(forecast, isHourly) {
   const min = (a) => a.length ? Math.min(...a) : null;
   // Condition at midday is the most representative for an aggregated day
   const midday = entries.reduce((best, e) =>
-    Math.abs(new Date(e.datetime).getHours() - 13) <
-    Math.abs(new Date(best.datetime).getHours() - 13) ? e : best, entries[0]);
+    Math.abs((hourInTimeZone(e.datetime, timeZone) ?? 13) - 13) <
+    Math.abs((hourInTimeZone(best.datetime, timeZone) ?? 13) - 13) ? e : best, entries[0]);
   return {
     temp_max: max(temps),
     temp_min: min(temps),
@@ -486,11 +540,13 @@ function tomorrowFromForecast(forecast, isHourly) {
 }
 
 // Mirror of the sensor package's tomorrow scoring.
-function scoreTomorrow(d, windUnit, th) {
+function scoreTomorrow(d, windUnit, tempUnit, th) {
   const t = th || THRESHOLD_DEFAULTS;
   const hot = t.temp_hot, cold = t.temp_cold;
   let pts = 0;
-  const { temp_max: tmax, temp_min: tmin, uv, rain } = d;
+  const { temp_max: rawMax, temp_min: rawMin, uv, rain } = d;
+  const tmax = tempToC(rawMax, tempUnit);
+  const tmin = tempToC(rawMin, tempUnit);
   if (tmax != null && tmin != null) {
     pts += (tmax > hot || tmin < cold) ? 2 : (tmax > hot - 2 || tmin < cold + 3) ? 1 : 0;
     const range = tmax - tmin;
@@ -931,9 +987,9 @@ class MigraineRiskCard extends HTMLElement {
     this._fc = {};     // forecast store: 'eid|type' → {forecast, unsub, failed}
   }
 
-  disconnectedCallback() {
-    this._hist = {};   // drop cached history so re-created cards don't accumulate
-    for (const k of Object.keys(this._fc)) {
+  _clearDataCaches() {
+    this._hist = {};
+    for (const k of Object.keys(this._fc || {})) {
       const store = this._fc[k];
       if (store && store.timer) clearTimeout(store.timer);
       if (store && store.retry) clearTimeout(store.retry);
@@ -941,6 +997,10 @@ class MigraineRiskCard extends HTMLElement {
       if (u) { try { u(); } catch (e) { /* connection already closed */ } }
     }
     this._fc = {};
+  }
+
+  disconnectedCallback() {
+    this._clearDataCaches();
   }
 
   static async getConfigElement() {
@@ -958,39 +1018,25 @@ class MigraineRiskCard extends HTMLElement {
     return document.createElement('migraine-risk-card-editor');
   }
 
-  static getStubConfig(hass) {
-    const ids = Object.keys(hass.states);
-    const find = (p) => ids.find(id => id.includes(p)) || '';
-    const cfg = { type: 'custom:migraine-risk-card' };
-    // Auto-detect integration entities
-    const rs = find('migraine_risk_score');
-    if (rs) cfg.entity_risk_score = rs;
-    const rl = find('migraine_risk_level');
-    if (rl) cfg.entity_risk_level = rl;
-    const fc = find('migraine_risk_forecast');
-    if (fc) cfg.entity_forecast = fc;
-    // Factor entities
-    const map = {
-      entity_pressure_6h: 'pressure_drop_6h',
-      entity_pressure_24h: 'pressure_drop_24h',
-      entity_humidity: 'migraine_humidity',
-      entity_temperature: 'migraine_temperature',
-      entity_temperature_change: 'temperature_change',
-      entity_wind_speed: 'migraine_wind',
-      entity_uv_index: 'migraine_uv',
-      entity_storm: 'thunderstorm',
-      entity_air_quality: 'waqi_aqi',
-    };
-    for (const [key, pattern] of Object.entries(map)) {
-      const e = find(pattern);
-      if (e) cfg[key] = e;
-    }
-    return cfg;
+  static getStubConfig() {
+    // v3.x is standalone-first. Do not guess a user's weather provider,
+    // location, sensor choice, or legacy-package mode from existing entities.
+    // Integration/package entities remain available through explicit editor
+    // configuration, preserving existing cards without silently opting new
+    // cards into a legacy backend.
+    return { type: 'custom:migraine-risk-card' };
   }
 
   setConfig(config) {
-    // No required entities — card shows what's configured
-    this._config = { ...config };
+    // No required entities — card shows what's configured. If an editor change
+    // points the card at different data sources, dispose old forecast sockets
+    // and history so stale data cannot leak into the new configuration.
+    const previous = this._config;
+    const next = { ...config };
+    const sourceKeys = FACTOR_KEYS.map(k => FACTORS[k].configKey)
+      .concat(['entity_forecast', 'entity_risk_score', 'entity_risk_level']);
+    if (previous && sourceKeys.some(k => previous[k] !== next[k])) this._clearDataCaches();
+    this._config = next;
     if (this._hass) {
       this._lang = resolveLang(this._hass, this._config);
       loadTranslation(this._lang, this._config, () => { this._prevHash = ''; this._update(); });
@@ -1057,7 +1103,7 @@ class MigraineRiskCard extends HTMLElement {
       // state ("cloudy") often does not change when they do
       if (eid.startsWith('weather.') && e?.attributes) {
         const a = e.attributes;
-        s += ';' + (a.temperature ?? '') + ';' + (a.humidity ?? '') + ';' + (a.wind_speed ?? '') + ';' + (a.uv_index ?? '');
+        s += ';' + (a.temperature ?? '') + ';' + (a.humidity ?? '') + ';' + (a.pressure ?? '') + ';' + (a.wind_speed ?? '') + ';' + (a.uv_index ?? '') + ';' + (a.temperature_unit ?? '') + ';' + (a.pressure_unit ?? '') + ';' + (a.wind_speed_unit ?? '') + ';' + (a.supported_features ?? '');
       }
       s += '|';
     }
@@ -1093,22 +1139,27 @@ class MigraineRiskCard extends HTMLElement {
           const failed = series && series.failed;
           return { score: null, display: null, unit, pending: !failed, unavailable: !!failed };
         }
+        if (series.noData || series.points.length === 0) {
+          return { score: null, display: null, unit, unavailable: true };
+        }
         // series.ts is when the history was sampled; anchoring the window to it
         // keeps the result stable between renders instead of drifting with the clock
         const val = mode === 'pressure'
           ? computeDropFromPeak(series.points, hours, current, series.ts)
           : computeChange(series.points, hours, current, series.ts);
-        if (val == null) return { score: null, display: null, unit, pending: true };
+        if (val == null) return { score: null, display: null, unit, unavailable: true };
         return { score: Math.abs(val), display: Math.round(val * 10) / 10, unit };
       }
     }
     if (entity && key === 'thunderstorm' && entity.entity_id.startsWith('weather.')) {
-      const fc = this._ensureForecast(entity.entity_id, 'hourly');
-      if (fc && fc.length) {
-        const level = thunderLevelFromHourly(fc);
-        return { score: level, display: level, unit: '' };
+      if (supportsForecast(entity, 'hourly')) {
+        const fc = this._ensureForecast(entity.entity_id, 'hourly');
+        if (fc && fc.length) {
+          const level = thunderLevelFromHourly(fc, this._hass?.config?.time_zone);
+          return { score: level, display: level, unit: '' };
+        }
       }
-      // No forecast (yet) — fall through to current-condition detection
+      // No usable hourly forecast (yet) — fall through to current-condition detection
     }
     return extractFactorValue(entity, key, def);
   }
@@ -1155,12 +1206,12 @@ class MigraineRiskCard extends HTMLElement {
     const start = new Date(now - 25 * 3600e3).toISOString();
     const end = new Date(now).toISOString();
     this._hass.callApi('GET',
-      `history/period/${start}?end_time=${encodeURIComponent(end)}&filter_entity_id=${eid}`
+      `history/period/${start}?end_time=${encodeURIComponent(end)}&filter_entity_id=${encodeURIComponent(eid)}&significant_changes_only=0`
     ).then(res => {
       const arr = (res && res[0]) || [];
       const points = [];
       for (const s of arr) {
-        const t = new Date(s.last_changed || s.last_updated).getTime();
+        const t = new Date(s.last_updated || s.last_changed).getTime();
         if (isNaN(t)) continue;
         const at = s.attributes || {};
         let v;
@@ -1175,15 +1226,17 @@ class MigraineRiskCard extends HTMLElement {
         }
         if (v != null) points.push({ t, v });
       }
-      this._hist[key] = { ts: Date.now(), points, fetching: false };
+      this._hist[key] = { ts: Date.now(), points, fetching: false, noData: points.length === 0 };
       this._update();
     }).catch((err) => {
       // Keep stale points if we had them; retry after the cache window
+      const hasStale = !!(cached && cached.points && cached.points.length);
       this._hist[key] = {
         ts: Date.now(),
-        points: cached ? cached.points : null,
+        points: hasStale ? cached.points : null,
         fetching: false,
-        failed: !(cached && cached.points),
+        failed: !hasStale,
+        noData: !hasStale,
       };
       console.warn(`[migraine-risk-card] history for ${eid} (${mode}) failed: ${err && (err.message || err)}`);
       // Re-render: without this the tile stays on "…" until some unrelated
@@ -1195,12 +1248,8 @@ class MigraineRiskCard extends HTMLElement {
   }
 
   // Live forecast via weather/subscribe_forecast (how the built-in weather
-  // card works), with a one-shot weather.get_forecasts fallback.
-  // Returns the current forecast array or null while pending.
-  // Live forecast via weather/subscribe_forecast (how the built-in weather
   // card works). If the subscription fails or stays silent, fall back to a
-  // one-shot execute_script call and keep retrying on a timer instead of
-  // giving up after a single miss.
+  // one-shot weather.get_forecasts service call and keep retrying.
   // Returns the forecast array, or null while pending.
   _ensureForecast(eid, type) {
     const key = eid + '|' + type;
@@ -1252,12 +1301,11 @@ class MigraineRiskCard extends HTMLElement {
     }
   }
 
-  // Fallback: execute_script is the supported way for the frontend to call a
-  // service and read its response (a raw call_service with return_response is
-  // rejected by the server).
-  // One-shot read of the current forecast. `opportunistic` means a live
-  // subscription is also in flight, so a failure here is not fatal — it just
-  // means we keep waiting for the subscription's first push.
+  // One-shot read of the current forecast. Home Assistant's websocket
+  // call_service command has supported response-returning services since before
+  // our minimum HA 2024.6, and unlike execute_script it is not admin-only.
+  // `opportunistic` means a live subscription is also in flight, so a failure
+  // here is not fatal — it just means we keep waiting for its first push.
   _forecastFetch(eid, type, opportunistic) {
     const key = eid + '|' + type;
     const store = this._fc[key];
@@ -1271,23 +1319,17 @@ class MigraineRiskCard extends HTMLElement {
     store.fetching = true;
     store.fetched = true;
     conn.sendMessagePromise({
-      type: 'execute_script',
-      sequence: [{
-        service: 'weather.get_forecasts',
-        data: { type },
-        target: { entity_id: eid },
-        response_variable: 'result',
-      }, {
-        stop: 'done',
-        response_variable: 'result',
-      }],
+      type: 'call_service',
+      domain: 'weather',
+      service: 'get_forecasts',
+      service_data: { type },
+      target: { entity_id: eid },
+      return_response: true,
     }).then(res => {
       const s = this._fc[key];
       if (s) s.fetching = false;
-      // execute_script wraps the service response; shapes differ across HA
-      // versions, so accept the documented one and the plain variants.
-      const resp = (res && (res.response || res.result)) || {};
-      const holder = resp[eid] || (resp.result && resp.result[eid]) || resp;
+      const resp = (res && res.response) || {};
+      const holder = resp[eid] || resp;
       const fc = (holder && holder.forecast) || null;
       if (fc && fc.length) this._forecastReceived(eid, type, fc);
       else if (!opportunistic) {
@@ -1324,17 +1366,20 @@ class MigraineRiskCard extends HTMLElement {
     store.reason = reason;
     this._forecastLog(eid, type, reason, err);
 
-    // Retry rather than staying stuck until the page is reloaded
-    if ((store.tries || 0) < FORECAST_MAX_TRIES && !store.retry) {
+    // Retry quickly a few times, then keep a low-frequency recovery loop so
+    // transient HA/provider outages can self-heal without a browser refresh.
+    if (!store.retry) {
+      const exhausted = (store.tries || 0) >= FORECAST_MAX_TRIES;
       store.retry = setTimeout(() => {
         const s = this._fc[key];
         if (!s) return;
         s.retry = null;
         s.fetched = false;
         s.fetching = false;
+        if (exhausted) s.tries = 0;
         if (s.unsub) { try { s.unsub(); } catch (e) { /* already closed */ } s.unsub = null; }
         this._forecastAttempt(eid, type);
-      }, FORECAST_RETRY_MS);
+      }, exhausted ? FORECAST_RECOVERY_MS : FORECAST_RETRY_MS);
     }
     this._prevHash = '';
     this._update();
@@ -1573,7 +1618,11 @@ class MigraineRiskCard extends HTMLElement {
       return;
     }
     const entity = this._hass.states[fid];
-    if (!entity) return;
+    if (!entity) {
+      const existing = card.querySelector('.forecast');
+      if (existing) existing.remove();
+      return;
+    }
 
     let bar = card.querySelector('.forecast');
     if (!bar) {
@@ -1641,6 +1690,7 @@ class MigraineRiskCard extends HTMLElement {
   // Tomorrow's risk computed in-card from a weather entity's forecast.
   _refreshForecastFromWeather(bar, entity) {
     const eid = entity.entity_id;
+    const timeZone = this._hass?.config?.time_zone;
     let data = null;
     let daily = null;
 
@@ -1651,7 +1701,7 @@ class MigraineRiskCard extends HTMLElement {
 
     if (canDaily) {
       daily = this._ensureForecast(eid, 'daily');
-      if (daily && daily.length) data = tomorrowFromForecast(daily, false);
+      if (daily && daily.length) data = tomorrowFromForecast(daily, false, timeZone);
     }
 
     const dailyStore = this._fc[eid + '|daily'];
@@ -1663,7 +1713,7 @@ class MigraineRiskCard extends HTMLElement {
     if (!data && dailyUnusable && canHourly) {
       // Aggregate tomorrow out of the hourly forecast instead
       const hourly = this._ensureForecast(eid, 'hourly');
-      if (hourly && hourly.length) data = tomorrowFromForecast(hourly, true);
+      if (hourly && hourly.length) data = tomorrowFromForecast(hourly, true, timeZone);
     }
 
     if (!data) {
@@ -1682,7 +1732,7 @@ class MigraineRiskCard extends HTMLElement {
     }
 
     const a = entity.attributes || {};
-    const pts = scoreTomorrow(data, a.wind_speed_unit, resolveThresholds(this._hass, this._config));
+    const pts = scoreTomorrow(data, a.wind_speed_unit, a.temperature_unit, resolveThresholds(this._hass, this._config));
     const level = tomorrowLevel(pts);
     const colour = riskColour(level);
     const fCard = bar.closest('.card');
@@ -1723,11 +1773,13 @@ class MigraineRiskCardEditor extends HTMLElement {
     this.attachShadow({ mode: 'open' });
     this._config = {};
     this._rendered = false;
+    this._translationRequestKey = null;
   }
 
   set hass(hass) {
     const firstHass = !this._hass;
     this._hass = hass;
+    this._requestTranslation();
     if (this._rendered) {
       if (firstHass) {
         // Language comes from hass — re-render once it is known
@@ -1742,13 +1794,26 @@ class MigraineRiskCardEditor extends HTMLElement {
 
   setConfig(config) {
     this._config = { ...config };
+    this._requestTranslation();
     this._render();
   }
 
-  _t(path, fallback) {
+  _requestTranslation() {
     const lang = resolveLang(this._hass, this._config);
-    loadTranslation(lang, this._config, () => { if (this._rendered) this._render(); });
-    return tr(lang, path, fallback);
+    const key = lang + '|' + (this._config.translations_path || '');
+    if (this._translationRequestKey === key) return;
+    this._translationRequestKey = key;
+    loadTranslation(lang, this._config, () => {
+      // Translation loading is asynchronous, but rendering itself must stay
+      // side-effect-free. In particular, _t() is called dozens of times per
+      // render; scheduling another render from there creates an infinite
+      // microtask loop once a dictionary is already cached.
+      if (this._translationRequestKey === key && this._rendered) this._render();
+    });
+  }
+
+  _t(path, fallback) {
+    return tr(resolveLang(this._hass, this._config), path, fallback);
   }
 
   _render() {
@@ -2139,7 +2204,10 @@ class MigraineRiskCardEditor extends HTMLElement {
 
     const titleEl = document.createElement('div');
     titleEl.className = 'section-title';
-    titleEl.innerHTML = `<ha-icon icon="${icon}"></ha-icon> ${title}`;
+    const titleIcon = document.createElement('ha-icon');
+    titleIcon.setAttribute('icon', icon);
+    titleEl.appendChild(titleIcon);
+    titleEl.appendChild(document.createTextNode(' ' + title));
     section.appendChild(titleEl);
 
     if (hint) {
@@ -2193,13 +2261,19 @@ class MigraineRiskCardEditor extends HTMLElement {
 
 /* ─── Register ───────────────────────────────────────────────────── */
 
-customElements.define('migraine-risk-card', MigraineRiskCard);
-customElements.define('migraine-risk-card-editor', MigraineRiskCardEditor);
+if (!customElements.get('migraine-risk-card')) {
+  customElements.define('migraine-risk-card', MigraineRiskCard);
+}
+if (!customElements.get('migraine-risk-card-editor')) {
+  customElements.define('migraine-risk-card-editor', MigraineRiskCardEditor);
+}
 
 window.customCards = window.customCards || [];
-window.customCards.push({
-  type: 'migraine-risk-card',
-  name: 'Migraine Risk Card',
-  description: 'Science-backed migraine risk visualisation with real-time factor tracking and forecasting.',
-  preview: false,
-});
+if (!window.customCards.some(card => card.type === 'migraine-risk-card')) {
+  window.customCards.push({
+    type: 'migraine-risk-card',
+    name: 'Migraine Risk Card',
+    description: 'Science-backed migraine risk visualisation with real-time factor tracking and forecasting.',
+    preview: false,
+  });
+}

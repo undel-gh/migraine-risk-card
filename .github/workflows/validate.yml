@@ -16,7 +16,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: HACS validation
-        uses: hacs/action@main
+        uses: hacs/action@22.5.0
         with:
           category: plugin
 
@@ -36,6 +36,9 @@ jobs:
 
       - name: Syntax check
         run: node --check dist/migraine-risk-card.js
+
+      - name: Unit and regression tests
+        run: node tests/test-core.js
 
       - name: Validate translations
         run: |

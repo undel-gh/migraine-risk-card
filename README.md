@@ -12,6 +12,19 @@ A science-backed environmental migraine risk monitoring card for Home Assistant.
 This is a fork of [Project](https://github.com/GreenNovaEmma/migraine-risk-card) which had wonderful idea, but lacked technical quality and seamless user interface. So, I completely rebuilt it from scratch and made some improvements based on user feedback from original repo.
 All credit to idea and sensor package go to original author.
 
+## What's New in 3.4
+
+**3.4.0 is a quality/reliability release for the standalone v3.x card.** It fixes hidden edge cases without changing the scoring model:
+
+- Weather-entity pressure and temperature history now includes attribute-only Recorder updates and uses their real update timestamps.
+- Pressure-only `weather.*` updates trigger a card refresh instead of waiting for an unrelated state change.
+- Tomorrow scoring normalises °F to °C while keeping the source unit for display.
+- Forecast day selection follows the Home Assistant timezone rather than the browser timezone.
+- Missing/insufficient Recorder history is shown as unavailable instead of an endless loading indicator.
+- Translation loading, config-source changes, duplicate resource registration, and stale forecast UI paths are hardened.
+- The optional compatibility sensor package now uses true rolling Statistics windows and unit-aware pressure/temperature conversion.
+- Regression tests cover the pure scoring/conversion/date helpers and critical source-code invariants.
+
 ## What's New in 3.0
 
 **The card is now self-sufficient — the sensor package is optional.** Point any factor at a `weather.*` entity and the card does the rest itself:
@@ -46,7 +59,7 @@ The result: everything updates through HACS with one click. The sensor package i
 
 > Modern HACS registers the dashboard resource for you — you do **not** need to add a resource manually under *Settings → Dashboards → Resources*. Adding one by hand creates a **second, un-cache-busted copy** of the card, which loads an old version alongside the new one. If your card ever looks out of date or the language selector vanishes, check for a duplicate resource — see [Troubleshooting](#troubleshooting).
 
-After downloading, hard-refresh your browser (**Ctrl+F5**). Open the browser console (F12) and you should see a single banner: `🧠 Migraine Risk Card v3.2.0`.
+After downloading, hard-refresh your browser (**Ctrl+F5**). Open the browser console (F12) and you should see a single banner: `🧠 Migraine Risk Card v3.4.0`.
 
 ### Step 2 — Add the card to a dashboard
 
@@ -92,7 +105,7 @@ Every factor is optional. Omit a line and that tile disappears and the gauge max
 | `title` | string | Optional heading shown on the card — handy when you run one card per location. |
 | `displayUnits` | `metric` \| `imperial` | Display units only; scoring is always metric. Default `metric`. |
 | `language` | `auto` \| `en` \| `ru` | UI language. Default `auto` (from Home Assistant). |
-| `theme` | `auto` \| `dark' \| `light` | UI theme. Default `auto` (from Home Assistant). |
+| `theme` | `auto` \| `dark` \| `light` | UI theme. Default `auto` (from Home Assistant). |
 | `translations_path` | string | Override where translation files are served from (only needed for non-standard installs). |
 | `max_score` | number | Override the gauge maximum (integration mode). Leave empty for automatic. |
 | `thresholds` | object | Personal trigger thresholds — see [Calibration](#calibrating-to-your-personal-triggers). |
@@ -106,11 +119,15 @@ A few things worth knowing when choosing what to feed each factor:
 - **Pressure — a physical barometer wins.** It reports every minute versus a weather provider's 30–60 min, so a falling front shows up hours earlier. Pressure is spatially smooth and a barometer can live indoors, so it's immune to sun/radiation error. The card reads absolute pressure and derives the change from history — no calibration needed.
 - **Temperature & humidity — trust a good local sensor, but beware radiation error.** A poorly-shielded outdoor sensor that over-reads in morning sun will inflate the temperature factors *and* depress humidity at the same time. Until shielding is sorted, a weather integration is often the safer source. Pick one humidity source and stick with it — providers can disagree by 10%+.
 - **AQI is not in weather entities.** The Home Assistant `weather` domain has no air-quality field — no provider exposes it there. Use a dedicated integration (WAQI, AirVisual, OpenWeatherMap Air Pollution) and point `entity_air_quality` at its sensor. If the nearest monitoring station is far away, consider leaving the factor off rather than scoring someone else's air.
-- **Recorder must be on for the pressure/temperature-change factors.** The card reads history from the recorder, so the chosen entity must not be excluded from recording. If a change factor shows `…` forever, check your `recorder:` `exclude:` config.
+- **Recorder must be on for the pressure/temperature-change factors.** The card reads history from the recorder, so the chosen entity must not be excluded from recording. If a change factor shows `—`, check your `recorder:` `exclude:` config and make sure the source has enough recorded history.
 
 ## Optional: the sensor package
 
-The bundled `sensor-package/migraine_sensors.yaml` reproduces the scoring **server-side** and adds things the card can't do on its own: notifications and automations, history you can graph, and WAQI air-quality sensors (AQI/PM2.5/PM10/ozone). It's entirely optional in 3.0.
+Starting with v3.0, the card does **not** use `sensor-package/migraine_sensors.yaml` as its backend. The package is retained as an optional compatibility/server-side layer for users migrating from 1.x/2.x installations and for users who explicitly want server-side score entities, automations, or WAQI-derived sensors. A normal standalone 3.x installation does not need it. In v3.4 its pressure/temperature windows were also changed to true rolling Statistics windows so legacy package users no longer get reset-boundary discontinuities.
+
+When adding a new v3.x card, source entities are intentionally **not auto-selected**. Choose the weather provider and/or sensors you actually want in the visual editor. This also prevents entities left behind by a 1.x/2.x sensor-package installation from silently switching a new card into package/integration mode.
+
+> **Recorder note for the optional package:** the Statistics sensors restore their rolling buffers from Recorder after a restart. If Recorder is disabled, the database was cleared, or the source entities are excluded, a nominal 6h/24h window initially covers only the samples collected since startup and becomes a full window only after enough time has elapsed. Use the public `sensor.migraine_temperature_change_6h` delta sensor rather than the internal `*_rolling` Statistics helper.
 
 1. Enable packages in `configuration.yaml`:
    ```yaml
